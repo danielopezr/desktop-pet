@@ -71,3 +71,9 @@ The constants at the top of `parton.py` control its behavior:
 ## Credits
 
 Art by [Jesshiyoo](https://jesshiyoo.itch.io/).
+
+## License
+
+The code is released under the [MIT License](LICENSE). The license covers the
+code only: the sprites belong to Jesshiyoo and are subject to their own
+license, which does not allow redistributing them.
