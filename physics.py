@@ -1,7 +1,8 @@
 """Shared drag-and-throw physics for Parton and the training dummy.
 
 Both are picked up and thrown the same way; a heavier body (weight > 1) is
-thrown slower and bounces less off the screen edges.
+thrown slower and bounces less off the screen edges. A thrown body that hits
+the other one fast enough hurts it, and landing too fast hurts Parton.
 """
 import time
 
@@ -15,6 +16,11 @@ THROW_FLICK_FACTOR = 0.9      # ...up to this share at twice that speed
 THROW_MAX_SPEED = 2400        # cap on the throw speed, in pixels per second
 AIR_DRAG = 1.8                # how quickly the air slows its sideways speed
 WALL_BOUNCE = 0.5             # share of speed it keeps when bouncing off a screen edge
+
+# Impacts
+IMPACT_SPEED = 400            # a thrown body hitting the other one this fast hurts it
+IMPACT_BOUNCE = 0.3           # share of sideways speed it keeps when bouncing off the other
+FALL_DAMAGE_SPEED = 1400      # Parton landing this fast gets hurt (about a drop from 380 px)
 
 # Clicking: a quick click hits; holding or dragging picks it up
 DRAG_THRESHOLD = 6            # pixels the cursor must move (relative to it) to start dragging

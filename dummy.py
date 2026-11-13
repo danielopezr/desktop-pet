@@ -4,8 +4,10 @@
 - A quick left click hits it (the cursor turns into a sword over it); Parton
   hits it too.
 - Hold or drag to pick it up and throw it, like Parton, but it is twice as
-  heavy: it flies half as fast and bounces less.
-- On the 17th hit it breaks and disappears; it can be revived from the menu.
+  heavy: it flies half as fast and bounces less. Thrown at Parton, it hurts
+  him.
+- On the 17th hit it breaks and disappears; it comes back on its own after
+  RESPAWN_SECONDS, or right away with "Revive dummy" in the menu.
 - Right click: the shared menu (see App in parton.py).
 """
 import ctypes
@@ -25,6 +27,7 @@ HITS_TO_DIE = 17
 HIT_FRAME_MS = 60
 BREAK_FRAME_MS = 90
 RUBBLE_VISIBLE_MS = 1_500  # how long the remains stay before it disappears
+RESPAWN_SECONDS = 15      # after breaking, it comes back on its own after this long
 MARGIN = 8                # distance from the screen edge where it starts
 WEIGHT = 2.0              # twice as heavy as Parton: thrown half as fast
 TICK_MS = 16              # update rate while held or flying (~60 fps)
@@ -191,6 +194,7 @@ class TrainingDummy:
         self.gone = False       # broken and already gone from the screen
         self.hidden = False     # hidden from the menu
         self.anim_job = None
+        self.respawn_job = None # pending automatic comeback after breaking
         self.pressed = None     # (time, x, y) of a left click in progress
         self.reset_position()
 
@@ -206,6 +210,7 @@ class TrainingDummy:
         self.y = 0.0                            # height above the taskbar
         self.vx = self.vy = 0.0
         self.state = "rest"                     # "rest", "held" or "flying"
+        self.impact_done = True                 # only a fresh throw can hit Parton
         self.place()
 
     # --- State seen by Parton and the menu ----------------------------------------
@@ -219,6 +224,10 @@ class TrainingDummy:
     def on_screen(self):
         """Something of it is on the screen (standing, or breaking)."""
         return not self.gone and not self.hidden
+
+    def respawning(self):
+        """Broken, and coming back on its own soon."""
+        return self.respawn_job is not None
 
     def center_x(self):
         """Screen x of the middle of its body."""
@@ -235,6 +244,7 @@ class TrainingDummy:
     # --- Menu actions ------------------------------------------------------------
     def hide(self):
         self.hidden = True
+        self.cancel_respawn()   # hidden on purpose: it stays away
         self.let_go()
         self.window.withdraw()
         self.hitbox.withdraw()
@@ -247,6 +257,7 @@ class TrainingDummy:
         self.place()
 
     def revive(self):
+        self.cancel_respawn()
         self.cancel_anim()
         self.hits = 0
         self.alive, self.gone, self.hidden = True, False, False
@@ -287,6 +298,7 @@ class TrainingDummy:
         self.state = "held"
         self.vx = self.vy = 0.0
         self.trail = CursorTrail()
+        self.impact_done = False  # one hit on Parton per throw, at most
 
     def let_go(self):
         """Stop holding it (hidden or broken while held): it just falls."""
@@ -365,21 +377,31 @@ class TrainingDummy:
             if on_done:
                 on_done()
 
+    def cancel_respawn(self):
+        if self.respawn_job:
+            self.master.after_cancel(self.respawn_job)
+            self.respawn_job = None
+
     def cancel_anim(self):
         if self.anim_job:
             self.master.after_cancel(self.anim_job)
             self.anim_job = None
 
     def take_hit(self):
-        """A hit from the cursor or from Parton (also while held or flying)."""
+        """A hit from the cursor or from Parton (also while held or flying).
+        Returns True if this hit broke it."""
         if not self.can_be_hit():
-            return
+            return False
         self.hits += 1
         self.cancel_anim()
         if self.hits >= HITS_TO_DIE:
             self.die()
-        else:
-            self.play(self.hit, HIT_FRAME_MS, on_done=lambda: self.show_frame(self.idle[0]))
+            return True
+        self.play(self.hit, HIT_FRAME_MS, on_done=lambda: self.show_frame(self.idle[0]))
+        return False
+
+    def speed(self):
+        return (self.vx * self.vx + self.vy * self.vy) ** 0.5
 
     def die(self):
         # It breaks and, after a moment, disappears until it is revived.
@@ -394,4 +416,5 @@ class TrainingDummy:
             return
         self.gone = True
         self.window.withdraw()
+        self.respawn_job = self.master.after(int(RESPAWN_SECONDS * 1000), self.revive)
         self.app.check_empty()

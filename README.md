@@ -22,9 +22,16 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
 - **Pick it up** by holding the left mouse button on it, and release it
   anywhere: it falls back down to the taskbar. Let go while moving the mouse
   and it is **thrown** that way, as fast as you were moving, bouncing off the
-  screen edges.
+  screen edges. A **hard landing** hurts it.
 - **Hit it** with a quick left click: it flinches and turns to face you. On
   the ninth hit it **dies** and disappears.
+- **Heals** over time: after a few seconds without being hit, it recovers
+  one hit at a time.
+- **Runs away** from the cursor when it has only two hits left (dashing if
+  the cursor is very close and hopping around to dodge your clicks), until it
+  has healed a bit.
+- **Celebrates** with a couple of hops when one of its swings breaks the
+  dummy.
 
 ### The training dummy
 
@@ -34,20 +41,31 @@ The dummy (`dummy.py`) comes up together with Parton, in the same program:
 - **Hit it** with a quick left click: the cursor turns into a sword over it.
 - **Pick it up and throw it** just like Parton, but it is **twice as heavy**:
   the same flick throws it half as fast, and it bounces less off the edges.
+  Unlike Parton, landings don't hurt it.
 - Your hits and Parton's add up, even while it is in the air: on the 17th it
-  **breaks** and disappears.
+  **breaks** and disappears, and **comes back** on its own 15 seconds later.
+
+### Throwing them at each other
+
+- Throw Parton hard at the dummy and the dummy takes a hit (Parton bounces
+  off it).
+- Throw the dummy hard at Parton, or drop it on him, and Parton takes a hit.
+- A gentle toss doesn't hurt: from the side only the sideways speed counts,
+  and falling on top of the other one, the whole speed. One hit per throw.
 
 ### The menu
 
 Right click on Parton or on the dummy to open a small menu:
 
-- **Revive** a character that has died.
-- **Hide** or **show** each one, to have only one of them on the screen.
+- **Revive** a character that has died (the dummy without waiting).
+- **Hide** or **show** each one, to have only one of them on the screen. A
+  hidden dummy doesn't come back on its own.
 - **Exit** closes the program.
 
-If neither of them is left on the screen (both dead or hidden), there is
-nothing left to right-click, so the program closes; run it again to bring
-both back. Only one copy of the program runs at a time.
+If neither of them is left on the screen (both dead or hidden) and the dummy
+isn't about to come back, there is nothing left to right-click, so the
+program closes; run it again to bring both back. Only one copy of the program
+runs at a time.
 
 ## Requirements
 
@@ -64,8 +82,8 @@ redistributing them. To get them:
    <https://jesshiyoo.itch.io/> and copy its PNG sprite sheets into
    `assets/parton/sprites/`.
 2. *(Optional, for the dummy)* Download the free **Training Dummy 2D Pixel
-   Art** pack and copy its `IDLE.png`, `HIT.png` and `BREAKING.png` into
-   `assets/dummy/sprites/`.
+   Art** pack by Mattz Art from <https://xzany.itch.io/> and copy its
+   `IDLE.png`, `HIT.png` and `BREAKING.png` into `assets/dummy/sprites/`.
 3. *(Optional, for the sword cursor)* Download the free **Pixel Cursors &
    Icons** pack by Willosuna from <https://willosuna.itch.io/> and run
    `python make_cursor.py`. It looks for `pixel-cursors-icons-r4.zip` in your
@@ -122,6 +140,10 @@ The constants at the top of `parton.py` control its behavior:
 | `JUMP_MAX_HEIGHT`, `JUMP_PAUSE` | Highest jump, and the rest between jumps |
 | `AIR_ATTACK_FRAME_MS` | Speed of the mid-air swing |
 | `HITS_TO_DIE`, `DEATH_LINGER` | Hits it takes to die, and how long it lies there before disappearing |
+| `HEAL_DELAY`, `HEAL_INTERVAL` | How long without being hit before it heals, and how often it heals a hit |
+| `FLEE_AT`, `FLEE_DASH_DISTANCE` | With how many hits left it runs away, and how close the cursor must be for it to dash |
+| `FLEE_JUMP_HEIGHT`, `FLEE_JUMPS_PER_SECOND` | Height of its dodging hops while fleeing, and how often it hops (cursor far / close) |
+| `CELEBRATE_HOPS`, `CELEBRATE_HOP_HEIGHT` | How many hops it does after breaking the dummy, and how high |
 | `TRAIN_CHANCE`, `TRAIN_RANGE` | How often it goes to train on the dummy, and from how far |
 | `TRAIN_SWINGS`, `TRAIN_PAUSE` | How many swings per training session, and the pause between them |
 
@@ -133,18 +155,19 @@ The constants at the top of `parton.py` control its behavior:
 | `THROW_FACTOR`, `THROW_MAX_SPEED` | How much of the mouse speed a throw keeps, and its cap |
 | `THROW_FLICK_SPEED`, `THROW_FLICK_FACTOR` | From what mouse speed sharp flicks get stronger, and how much |
 | `AIR_DRAG`, `WALL_BOUNCE` | How quickly a throw slows down, and how much it bounces off the edges |
+| `IMPACT_SPEED`, `IMPACT_BOUNCE` | How fast a thrown body must hit the other one to hurt it, and how much it bounces off |
+| `FALL_DAMAGE_SPEED` | How fast a landing must be to hurt Parton |
 | `DRAG_THRESHOLD`, `AIR_DRAG_THRESHOLD`, `HOLD_SECONDS` | How far you must move (on the ground / in the air), or how long you must hold, for a click to become a grab |
 
 The dummy has its own settings at the top of `dummy.py` (`SCALE`,
-`HITS_TO_DIE`, `WEIGHT`, animation speeds and its starting distance from the
+`HITS_TO_DIE`, `RESPAWN_SECONDS`, `WEIGHT`, animation speeds and its starting distance from the
 screen edge).
 
 ## Credits
 
 - Parton art by [Jesshiyoo](https://jesshiyoo.itch.io/).
-- Training dummy from the *Training Dummy 2D Pixel Art* pack.
-- Sword cursor from *Pixel Cursors & Icons* by
-  [Willosuna](https://willosuna.itch.io/).
+- Dummy art by [Mattz Art](https://xzany.itch.io/).
+- Sword cursor art by [Willosuna](https://willosuna.itch.io/).
 
 ## License
 

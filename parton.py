@@ -34,7 +34,8 @@ from tkinter import messagebox
 from PIL import Image, ImageTk
 
 import dummy as training_dummy
-from physics import GRAVITY, CursorTrail, fly_step, is_drag, throw_velocity
+from physics import (FALL_DAMAGE_SPEED, GRAVITY, IMPACT_BOUNCE, IMPACT_SPEED, CursorTrail,
+                     fly_step, is_drag, throw_velocity)
 
 # --- Settings ------------------------------------------------------------------
 SCALE = 4                     # the character is ~27x22 px in the original sprite
@@ -69,6 +70,14 @@ AIR_SLASH_LAST_FRAME = 8      # it hangs in the air until this frame of the swin
 # Getting hit
 HITS_TO_DIE = 9               # hits it takes before dying
 DEATH_LINGER = 1.5            # seconds it lies there after dying, before disappearing
+HEAL_DELAY = 10.0             # seconds without being hit before it starts healing
+HEAL_INTERVAL = 6.0           # then it heals one hit every this many seconds
+FLEE_AT = 2                   # with this many hits left (or fewer) it flees the cursor
+FLEE_DASH_DISTANCE = 200      # if the cursor is closer than this, it dashes away
+FLEE_JUMP_HEIGHT = 90         # height of the dodging hops while fleeing, in pixels
+FLEE_JUMPS_PER_SECOND = (0.6, 2.0)  # how often it hops: cursor far, cursor close
+CELEBRATE_HOPS = 3            # little hops when it breaks the dummy
+CELEBRATE_HOP_HEIGHT = 75     # height of those hops, in pixels
 
 # Training on the dummy
 TRAIN_CHANCE = 0.4            # chance of training instead of wandering, after idling
@@ -89,7 +98,7 @@ ANIMATIONS = {
     "dash":    ("Dash.png",      60, True),
     "jump":    ("Jump.png",     100, True),
     "fall":    ("Fall.png",     100, True),
-    "hurt":    ("Hurt.png",     100, False),
+    "hurt":    ("Hurt.png",      70, False),
     "death":   ("Death.png",     90, False),
 }
 USED = tuple(ANIMATIONS)
@@ -194,8 +203,11 @@ class App:
         self.check_empty()
 
     def check_empty(self):
-        """With nobody left on the screen there is nothing to right-click: close."""
-        if not any(c.on_screen() for _, c in self.characters()):
+        """With nobody left on the screen there is nothing to right-click: close.
+
+        Unless the dummy is about to come back on its own.
+        """
+        if not any(c.on_screen() or c.respawning() for _, c in self.characters()):
             self.root.destroy()
 
     def run(self):
@@ -217,6 +229,10 @@ class Parton:
         self.height = (box[3] - box[1]) * SCALE
         self.ground = (ground - box[1]) * SCALE   # height of the feet inside the window
         self.body_half = body_half * SCALE
+        idle_top = union_bbox(raw_frames(ANIMATIONS["idle"][0]))[1]
+        self.body_height = (ground - idle_top) * SCALE   # from its feet to the top of its head
+        self.impact_done = True                   # only a fresh throw can hit the dummy
+        self.celebrate_pending = False
 
         # Frames facing right (original) and left (flipped).
         self.frames = {}
@@ -253,6 +269,7 @@ class Parton:
         self.gone = False                         # dead and already gone from the screen
         self.hidden = False                       # hidden from the menu
         self.closing = False
+        self.last_hurt = self.last_heal = 0.0     # when it was last hit / last healed
         self.training = False                     # in the middle of a session on the dummy
         self.attack_target = "cursor"
         self.set_state("idle")
@@ -260,6 +277,9 @@ class Parton:
     # --- Menu actions ------------------------------------------------------------
     def on_screen(self):
         return not self.gone and not self.hidden
+
+    def respawning(self):
+        return False                              # Parton only comes back from the menu
 
     def hide(self):
         self.hidden = True
@@ -321,7 +341,7 @@ class Parton:
     # --- States ----------------------------------------------------------------
     def set_state(self, state, idle_seconds=None, target="cursor"):
         self.state = state
-        if state in ("chase", "run", "jump", "dodge"):
+        if state in ("chase", "flee", "run", "jump", "dodge"):
             self.training = False            # the cursor or a wander interrupts training
         if state in ("idle", "run"):
             self.set_anim(state, restart=True)
@@ -335,7 +355,7 @@ class Parton:
                        if abs(x - self.x) >= MIN_RUN_DISTANCE]
             self.target = options[0] if options else (lo if self.x > (lo + hi) / 2 else hi)
             self.facing = 1 if self.target > self.x else -1
-        elif state == "chase":
+        elif state in ("chase", "flee"):
             self.set_anim("run")
         elif state == "attack":
             self.attack_target = target
@@ -354,6 +374,9 @@ class Parton:
             self.vy = (2 * GRAVITY * rise) ** 0.5
             self.air_swung = False           # one air swing per jump
             self.set_anim("jump", restart=True)
+        elif state == "celebrate":
+            self.hops_left = CELEBRATE_HOPS
+            self.vy = 0.0
         elif state == "air_attack":
             self.air_swung = True
             self.vy = 0.0                    # hang at the top while swinging
@@ -385,11 +408,12 @@ class Parton:
         if self.hidden or self.gone:             # off the screen: nothing to do
             self.root.after(TICK_MS, self.tick)
             return
+        self.heal(now)
 
         if self.state in ("run", "train") or (self.state == "idle" and not self.pausing):
-            # While calm, keep watch: if it sees the cursor, go after it.
+            # While calm, keep watch: if it sees the cursor, go after it (or flee).
             if self.sees_mouse(VISION_RANGE) is not None:
-                self.set_state("chase")
+                self.set_state(self.reaction())
 
         if self.state == "idle":
             self.idle_left -= dt
@@ -403,7 +427,7 @@ class Parton:
                     else:
                         self.set_state("run")
                 elif self.sees_mouse(VISION_RANGE) is not None:
-                    self.set_state("chase")
+                    self.set_state(self.reaction())
                 elif self.training and self.dummy_standing():
                     self.face_dummy()
                     self.set_state("attack", target="dummy")
@@ -431,6 +455,10 @@ class Parton:
             self.move_towards(self.target, DASH_SPEED, dt)
             if self.x == self.target:        # has room now: turn around and re-evaluate
                 self.set_state("chase")
+        elif self.state == "flee":
+            self.flee(dt)
+        elif self.state == "celebrate":
+            self.celebrate(dt)
         elif self.state == "jump":
             self.jump(dt)
         elif self.state == "air_attack":
@@ -452,10 +480,17 @@ class Parton:
                 and self.anim == before[0] and self.frame_index != before[1]
                 and self.frame_index in SLASH_FRAMES.get(self.anim, ())
                 and self.slash_hits_dummy()):
-            self.dummy.take_hit()            # any slash that reaches the dummy hurts it
+            if self.dummy.take_hit():        # any slash that reaches the dummy hurts it
+                self.celebrate_pending = True    # ...and if that broke it: celebrate
+
+        self.check_impacts(dt)
 
         if finished:
-            if self.state == "attack" and self.attack_target == "dummy":
+            if self.state == "attack" and self.celebrate_pending:
+                self.celebrate_pending = False
+                self.training = False
+                self.set_state("celebrate")
+            elif self.state == "attack" and self.attack_target == "dummy":
                 # Training swing finished: another one after a short pause, or done.
                 self.swings_left -= 1
                 if self.swings_left > 0 and self.dummy_standing():
@@ -464,6 +499,7 @@ class Parton:
                     self.training = False
                     self.set_state("idle")
             elif self.state in ("attack", "air_attack"):
+                self.celebrate_pending = False
                 if self.y > 0:
                     # Air swing finished: keep falling.
                     self.state = "jump"
@@ -475,6 +511,8 @@ class Parton:
                 if self.y > 0:
                     self.state, self.vx, self.vy = "dropped", 0.0, min(self.vy, 0.0)
                     self.set_anim("fall")
+                elif self.sees_mouse(VISION_RANGE) is not None:
+                    self.set_state(self.reaction())  # strike back (or flee) right away
                 else:
                     self.set_state("idle", idle_seconds=ATTACK_PAUSE)
             elif self.state == "dead" and not self.closing:
@@ -492,7 +530,59 @@ class Parton:
             self.facing = 1 if target > self.x else -1
             self.x += step * self.facing
 
+    # --- Health: healing and fleeing ---------------------------------------------
+    def low_health(self):
+        return HITS_TO_DIE - self.hits <= FLEE_AT
+
+    def reaction(self):
+        """What it does on seeing the cursor: attack it, or run away when badly hurt."""
+        return "flee" if self.low_health() else "chase"
+
+    def heal(self, now):
+        """After a while without being hit, recover one hit at a time."""
+        if (self.alive and self.hits > 0 and now - self.last_hurt >= HEAL_DELAY
+                and now - self.last_heal >= HEAL_INTERVAL):
+            self.hits -= 1
+            self.last_heal = now
+
+    def flee(self, dt):
+        """Run away from the cursor (dash if it is very close) until it is out of sight,
+        hopping now and then so it is harder to hit."""
+        airborne = self.y > 0
+        if airborne:
+            self.fall(dt, 1.0)               # finish the hop wherever it is going
+        seen = self.sees_mouse(LOSE_RANGE)
+        if not airborne and seen is None:    # safe: calm down
+            self.set_state("idle")
+            return
+        if not airborne and not self.low_health():   # healed enough: fight back
+            self.set_state("chase")
+            return
+        dx = seen[0] if seen else -self.facing
+        away = -1 if dx > 0 else 1 if dx < 0 else random.choice((1, -1))
+        lo, hi = self.bounds()
+        target = min(max(self.x + away * LOSE_RANGE, lo), hi)
+        close = abs(dx) < FLEE_DASH_DISTANCE
+        before = self.x
+        self.move_towards(target, DASH_SPEED if close else CHASE_SPEED, dt)
+        if self.y > 0:
+            self.set_anim("jump" if self.vy > 0 else "fall")
+        elif self.x == before:               # cornered: nowhere to go, it just faces it
+            self.facing = 1 if dx >= 0 else -1
+            self.set_anim("idle")
+        else:
+            self.set_anim("dash" if close else "run")
+        # Dodging hops: more often the closer the cursor is.
+        far_rate, close_rate = FLEE_JUMPS_PER_SECOND
+        rate = close_rate if close else far_rate
+        if self.y == 0 and random.random() < rate * dt:
+            self.vy = (2 * GRAVITY * FLEE_JUMP_HEIGHT) ** 0.5
+            self.y = 0.1                     # off the ground
+
     def chase(self, dt):
+        if self.low_health():                # badly hurt: run away instead
+            self.set_state("flee")
+            return
         seen = self.sees_mouse(LOSE_RANGE)
         if seen is None:                     # lost it: calm down again
             self.set_state("idle")
@@ -574,8 +664,15 @@ class Parton:
         self.pressed = None
 
     def hit(self):
-        """Take a hit: flinch towards the cursor, or die on the last one."""
+        """Take a hit: flinch towards the cursor, or die on the last one.
+
+        Hits taken while it is already flinching still count, but don't make the
+        flinch longer: clicking fast can't keep it stunned.
+        """
         self.hits += 1
+        self.last_hurt = time.perf_counter()
+        if self.state == "hurt" and self.hits < HITS_TO_DIE:
+            return
         mx, _ = mouse_pos()
         if abs(mx - self.x) >= 1:
             self.facing = 1 if mx > self.x else -1
@@ -600,6 +697,7 @@ class Parton:
         self.state = "held"
         self.vx = self.vy = 0.0
         self.cursor_trail = CursorTrail()
+        self.impact_done = False             # this throw may hit the dummy
         self.set_anim("fall")
 
     def drop(self):
@@ -624,13 +722,73 @@ class Parton:
         _, top, _, bottom = work_area()
         ceiling = bottom - top - self.ground  # its window can't go above the screen
         before = self.vx
+        falling = -self.vy
         self.x, self.vx, self.y, self.vy = fly_step(self.x, self.vx, self.y, self.vy,
                                                     dt, lo, hi, ceiling)
         if before * self.vx < 0 and abs(self.vx) > 50:   # bounced: face the new way
             self.facing = 1 if self.vx > 0 else -1
         if self.y == 0:                      # landed
             self.vx = 0.0
-            self.set_state("idle", idle_seconds=JUMP_PAUSE)
+            self.impact_done = True
+            if falling >= FALL_DAMAGE_SPEED:
+                self.hit()                   # a hard landing hurts
+            else:
+                self.set_state("idle", idle_seconds=JUMP_PAUSE)
+
+    # --- Interactions with the dummy ------------------------------------------------
+    def body_box(self):
+        """(left, right, bottom, top) of its body: x on the screen, heights above the taskbar."""
+        return self.x - self.body_half, self.x + self.body_half, self.y, self.y + self.body_height
+
+    def touches_dummy(self):
+        if self.dummy is None or not self.dummy.can_be_hit():
+            return False
+        l, r, b, t = self.body_box()
+        d0, d1 = self.dummy.body_span()
+        low, high = self.dummy.body_heights()
+        return r >= d0 and l <= d1 and t >= low and b <= high
+
+    @staticmethod
+    def impact_speed(vx, vy, mover_bottom, other_top, dt):
+        """How hard a moving body hits another: from the side only its sideways speed
+        counts; falling onto it from above, its whole speed does."""
+        was_bottom = mover_bottom - vy * dt          # where its bottom was a moment ago
+        if was_bottom >= other_top - 5:
+            return (vx * vx + vy * vy) ** 0.5
+        return abs(vx)
+
+    def check_impacts(self, dt):
+        """A thrown body crashing into the other one hurts it (once per throw)."""
+        if not self.touches_dummy():
+            return
+        d = self.dummy
+        d_low, d_top = d.body_heights()
+        if (self.state == "dropped" and not self.impact_done
+                and self.impact_speed(self.vx, self.vy, self.y, d_top, dt) >= IMPACT_SPEED):
+            self.impact_done = True
+            d.take_hit()
+            self.vx = -self.vx * IMPACT_BOUNCE       # bounce off it
+        if (d.state == "flying" and not d.impact_done and self.alive and self.state != "held"
+                and self.impact_speed(d.vx, d.vy, d_low, self.y + self.body_height,
+                                      max(dt, 0.016)) >= IMPACT_SPEED):
+            d.impact_done = True
+            d.vx = -d.vx * IMPACT_BOUNCE
+            self.hit()                       # the dummy landed on Parton
+
+    def celebrate(self, dt):
+        """Little hops of joy after breaking the dummy."""
+        if self.y == 0 and self.vy <= 0:
+            if self.hops_left == 0:
+                self.set_state("idle")
+                return
+            self.hops_left -= 1
+            self.vy = (2 * GRAVITY * CELEBRATE_HOP_HEIGHT) ** 0.5
+            self.y = 0.1
+        self.vy -= GRAVITY * dt
+        self.y = max(self.y + self.vy * dt, 0.0)
+        if self.y == 0:
+            self.vy = 0.0
+        self.set_anim("jump" if self.vy > 0 else "fall" if self.y > 0 else "idle")
 
     def dodge(self, dx):
         """Dash back so the cursor ends up at the axe's distance."""
