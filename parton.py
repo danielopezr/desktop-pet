@@ -9,6 +9,9 @@
   distance and then attacks.
 - If the cursor is within reach sideways but too high for the axe, it jumps
   to try to reach it, and swings in the air if it gets close enough.
+- Left click and hold to pick it up; release it anywhere and it falls back
+  down to the taskbar. Let go while moving the cursor and it is thrown in
+  that direction, as fast as the cursor was moving.
 - Right click: menu to exit.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
@@ -52,6 +55,15 @@ JUMP_DRIFT = 140              # sideways speed while in the air, towards the cur
 JUMP_PAUSE = 0.6              # pause after landing before jumping again, in seconds
 AIR_ATTACK_FRAME_MS = 45      # the air swing plays faster than the ground one
 AIR_SLASH_LAST_FRAME = 8      # it hangs in the air until this frame of the swing
+
+# Throwing (when you drag it and let go)
+THROW_SAMPLE_SECONDS = 0.08   # cursor speed is measured over this last stretch
+THROW_FACTOR = 0.6            # share of the cursor speed it keeps when released
+THROW_FLICK_SPEED = 1500      # above this cursor speed, flicks get stronger...
+THROW_FLICK_FACTOR = 0.9      # ...up to this share at twice that speed
+THROW_MAX_SPEED = 2400        # cap on the throw speed, in pixels per second
+AIR_DRAG = 1.8                # how quickly the air slows its sideways speed
+WALL_BOUNCE = 0.5             # share of speed it keeps when bouncing off a screen edge
 
 SPRITES = Path(__file__).parent / "assets" / "sprites"
 
@@ -159,6 +171,8 @@ class Parton:
         self.label = tk.Label(self.root, bg=KEY_COLOR, bd=0)
         self.label.pack()
         self.label.bind("<Button-3>", self.show_menu)
+        self.label.bind("<ButtonPress-1>", self.grab)
+        self.label.bind("<ButtonRelease-1>", self.drop)
         self.menu = tk.Menu(self.root, tearoff=0)
         self.menu.add_command(label="Exit", command=self.root.destroy)
 
@@ -266,6 +280,10 @@ class Parton:
         elif self.state == "air_attack":
             # Hang still until the slash is over, then start falling.
             self.fall(dt, 0.0 if self.frame_index <= AIR_SLASH_LAST_FRAME else 1.0)
+        elif self.state == "held":
+            self.follow_cursor()
+        elif self.state == "dropped":
+            self.fly(dt)
 
         if self.animate(dt) and self.state in ("attack", "air_attack"):
             if self.y > 0:
@@ -341,8 +359,74 @@ class Parton:
         self.y += self.vy * dt
         if self.y <= 0:
             self.y = self.vy = 0.0
-            if self.state == "jump":
+            if self.state in ("jump", "dropped"):
                 self.set_state("idle", idle_seconds=JUMP_PAUSE)
+
+    # --- Drag and drop ---------------------------------------------------------
+    def grab(self, event):
+        """Pick it up: it hangs from the cursor at the point where it was grabbed."""
+        self.grab_offset = (event.x_root - self.root.winfo_x(),
+                            event.y_root - self.root.winfo_y())
+        self.state = "held"
+        self.vx = self.vy = 0.0
+        self.cursor_trail = []               # recent (time, x, y) of the cursor
+        self.set_anim("fall")
+
+    def drop(self, _event):
+        """Let go: it flies off with the cursor's speed and direction, then falls."""
+        if self.state != "held":
+            return
+        self.state = "dropped"
+        vx, vy = self.cursor_speed()
+        speed = (vx * vx + vy * vy) ** 0.5
+        scale = THROW_FACTOR
+        if speed > THROW_FLICK_SPEED:        # sharp flicks keep more of their speed
+            t = min(1.0, (speed - THROW_FLICK_SPEED) / THROW_FLICK_SPEED)
+            scale = THROW_FACTOR + (THROW_FLICK_FACTOR - THROW_FACTOR) * t
+        if speed * scale > THROW_MAX_SPEED:  # cap very fast flicks
+            scale = THROW_MAX_SPEED / speed
+        self.vx = vx * scale
+        self.vy = -vy * scale                # screen y grows downwards; ours grows upwards
+        if abs(self.vx) > 50:
+            self.facing = 1 if self.vx > 0 else -1
+
+    def cursor_speed(self):
+        """Cursor speed (pixels per second) over the last THROW_SAMPLE_SECONDS."""
+        now = time.perf_counter()
+        trail = [s for s in self.cursor_trail if now - s[0] <= THROW_SAMPLE_SECONDS]
+        if len(trail) < 2 or trail[-1][0] - trail[0][0] <= 0:
+            return 0.0, 0.0
+        (t0, x0, y0), (t1, x1, y1) = trail[0], trail[-1]
+        return (x1 - x0) / (t1 - t0), (y1 - y0) / (t1 - t0)
+
+    def follow_cursor(self):
+        mx, my = mouse_pos()
+        now = time.perf_counter()
+        self.cursor_trail = [s for s in self.cursor_trail if now - s[0] <= 0.5] + [(now, mx, my)]
+        _, _, _, bottom = work_area()
+        lo, hi = self.bounds()
+        ox, oy = self.grab_offset
+        self.x = min(max(mx - ox + self.width / 2, lo), hi)
+        self.y = max(bottom - self.ground - (my - oy), 0.0)   # never below the taskbar
+
+    def fly(self, dt):
+        """Thrown: move with its own speed, slowed by the air, bouncing off the screen edges."""
+        lo, hi = self.bounds()
+        _, top, _, bottom = work_area()
+        self.vx *= max(0.0, 1.0 - AIR_DRAG * dt)
+        self.x += self.vx * dt
+        if self.x < lo or self.x > hi:       # side edges: bounce back
+            self.x = min(max(self.x, lo), hi)
+            self.vx = -self.vx * WALL_BOUNCE
+            if abs(self.vx) > 50:
+                self.facing = 1 if self.vx > 0 else -1
+        ceiling = bottom - top - self.ground  # its window can't go above the screen
+        if self.y > ceiling:
+            self.y = ceiling
+            self.vy = -abs(self.vy) * WALL_BOUNCE
+        self.fall(dt, 1.0)
+        if self.state != "dropped":          # landed
+            self.vx = 0.0
 
     def dodge(self, dx):
         """Dash back so the cursor ends up at the axe's distance."""

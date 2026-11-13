@@ -17,6 +17,10 @@ your taskbar and hunts your mouse cursor with its axe.
   enough.
 - **Dashes back** when the cursor is right on top of it, to get the axe's
   distance, and then attacks.
+- **Pick it up** by holding the left mouse button on it, and release it
+  anywhere: it falls back down to the taskbar. Let go while moving the mouse
+  and it is **thrown** that way, as fast as you were moving, bouncing off the
+  screen edges.
 - Right click it to **exit**. Only one Parton runs at a time.
 
 ## Requirements
@@ -71,6 +75,9 @@ The constants at the top of `parton.py` control its behavior:
 | `TOO_CLOSE`, `DASH_SPEED` | When it dashes back, and how fast |
 | `JUMP_MAX_HEIGHT`, `GRAVITY`, `JUMP_PAUSE` | Highest jump, how fast it falls, and the rest between jumps |
 | `AIR_ATTACK_FRAME_MS` | Speed of the mid-air swing |
+| `THROW_FACTOR`, `THROW_MAX_SPEED` | How much of the mouse speed a throw keeps, and its cap |
+| `THROW_FLICK_SPEED`, `THROW_FLICK_FACTOR` | From what mouse speed sharp flicks get stronger, and how much |
+| `AIR_DRAG`, `WALL_BOUNCE` | How quickly a throw slows down, and how much it bounces off the edges |
 
 ## Credits
 
