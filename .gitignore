@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+
+# Third-party art pack: its license does not allow redistribution (see README.md)
+assets/sprites/
+assets/License.txt
+assets/Readme.txt
