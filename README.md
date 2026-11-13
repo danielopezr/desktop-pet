@@ -12,7 +12,9 @@ your taskbar and hunts your mouse cursor with its axe.
   and 250 px above the taskbar).
 - **Attacks** with one of its two axe swings, picked at random, once the
   cursor is within reach.
-- **Just watches** when the cursor is close but higher than the axe can reach.
+- **Jumps** at the cursor when it is close but higher than the axe can reach,
+  drifting towards it in the air, and **swings in mid-air** if it gets close
+  enough.
 - **Dashes back** when the cursor is right on top of it, to get the axe's
   distance, and then attacks.
 - Right click it to **exit**. Only one Parton runs at a time.
@@ -65,8 +67,10 @@ The constants at the top of `parton.py` control its behavior:
 | `RUN_SPEED`, `CHASE_SPEED` | Speed when wandering and when chasing |
 | `IDLE_SECONDS` | How long it idles before wandering |
 | `VISION_RANGE`, `VISION_HEIGHT` | How far it can see the cursor |
-| `ATTACK_REACH`, `ATTACK_HEIGHT` | How far the axe reaches |
+| `ATTACK_REACH`, `ATTACK_HEIGHT`, `SLASH_CENTER` | How far and how high the axe slash reaches, and where it aims |
 | `TOO_CLOSE`, `DASH_SPEED` | When it dashes back, and how fast |
+| `JUMP_MAX_HEIGHT`, `GRAVITY`, `JUMP_PAUSE` | Highest jump, how fast it falls, and the rest between jumps |
+| `AIR_ATTACK_FRAME_MS` | Speed of the mid-air swing |
 
 ## Credits
 

@@ -4,9 +4,11 @@
 - Idles for a while and then runs to a random spot.
 - If it sees the cursor nearby (left or right, not too high), it runs to it
   and swings its axe with attack 1 or attack 2, at random. If the cursor is
-  above the axe's vertical reach, it just watches it.
+  above the axe's vertical reach, it tries to jump at it.
 - If the cursor is right on top of it, it dashes back to get the axe's
   distance and then attacks.
+- If the cursor is within reach sideways but too high for the axe, it jumps
+  to try to reach it, and swings in the air if it gets close enough.
 - Right click: menu to exit.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
@@ -37,11 +39,19 @@ KEY_COLOR = "#ff00fe"         # color that becomes transparent
 VISION_RANGE = 450            # horizontal distance at which it sees the cursor
 VISION_HEIGHT = 250           # how far above the taskbar it can see the cursor
 LOSE_RANGE = 600              # beyond this distance it stops chasing
-ATTACK_REACH = 35 * SCALE     # axe reach (the sprite reaches 30-47 px)
-ATTACK_HEIGHT = 23 * SCALE + 8  # max axe height above the taskbar (sprite: 17-23 px)
+ATTACK_REACH = 35 * SCALE     # axe reach (the slash reaches 26-43 px ahead)
+ATTACK_HEIGHT = 19 * SCALE    # top of the slash above its feet (sprite: 1-19 px)
+SLASH_CENTER = 10 * SCALE     # middle of the slash above its feet: where it aims
 ATTACK_PAUSE = 0.35           # pause between swings, in seconds
 TOO_CLOSE = 20 * SCALE        # cursor on top of it: the axe would miss
 DASH_SPEED = 550              # pixels per second when dashing back
+JUMP_MAX_HEIGHT = 160         # highest jump, in pixels (it jumps just enough to aim)
+JUMP_MIN_HEIGHT = 40          # lowest jump, in pixels
+GRAVITY = 2600                # pixels per second squared
+JUMP_DRIFT = 140              # sideways speed while in the air, towards the cursor
+JUMP_PAUSE = 0.6              # pause after landing before jumping again, in seconds
+AIR_ATTACK_FRAME_MS = 45      # the air swing plays faster than the ground one
+AIR_SLASH_LAST_FRAME = 8      # it hangs in the air until this frame of the swing
 
 SPRITES = Path(__file__).parent / "assets" / "sprites"
 
@@ -52,13 +62,13 @@ ANIMATIONS = {
     "attack1": ("Attack 1.png",  70, False),
     "attack2": ("Attack 2.png",  70, False),
     "dash":    ("Dash.png",      60, True),
+    "jump":    ("Jump.png",     100, True),
+    "fall":    ("Fall.png",     100, True),
     # For later:
     "death":   ("Death.png",     90, False),
-    "fall":    ("Fall.png",     100, True),
     "hurt":    ("Hurt.png",     100, False),
-    "jump":    ("Jump.png",     100, False),
 }
-USED = ("idle", "run", "attack1", "attack2", "dash")
+USED = ("idle", "run", "attack1", "attack2", "dash", "jump", "fall")
 
 
 def work_area():
@@ -154,6 +164,8 @@ class Parton:
 
         lo, hi = self.bounds()
         self.x = random.uniform(lo, hi)           # body center, in screen pixels
+        self.y = 0.0                              # height above the taskbar (jumps)
+        self.vy = 0.0                             # vertical speed, positive is up
         self.facing = random.choice((1, -1))
         self.shown = None
         self.anim = None
@@ -182,7 +194,8 @@ class Parton:
         self.state = state
         if state in ("idle", "run"):
             self.set_anim(state, restart=True)
-        self.after_attack = idle_seconds == ATTACK_PAUSE
+        # A short pause (after a swing or a jump): it keeps still and doesn't react.
+        self.pausing = state == "idle" and idle_seconds is not None
         if state == "idle":
             self.idle_left = idle_seconds if idle_seconds is not None else random.uniform(*IDLE_SECONDS)
         elif state == "run":
@@ -197,11 +210,24 @@ class Parton:
             self.set_anim(random.choice(("attack1", "attack2")), restart=True)
         elif state == "dodge":
             self.set_anim("dash", restart=True)
+        elif state == "jump":
+            # Jump just high enough for the middle of the slash to reach the cursor.
+            seen = self.sees_mouse(LOSE_RANGE)
+            wanted = seen[1] - SLASH_CENTER if seen else JUMP_MAX_HEIGHT
+            rise = min(max(wanted, JUMP_MIN_HEIGHT), JUMP_MAX_HEIGHT)
+            self.vy = (2 * GRAVITY * rise) ** 0.5
+            self.air_swung = False           # one air swing per jump
+            self.set_anim("jump", restart=True)
+        elif state == "air_attack":
+            self.air_swung = True
+            self.vy = 0.0                    # hang at the top while swinging
+            self.set_anim("attack1", restart=True, frame_ms=AIR_ATTACK_FRAME_MS)
 
-    def set_anim(self, name, restart=False):
+    def set_anim(self, name, restart=False, frame_ms=None):
         """Switch animation; start from the first frame if it changes or if asked to."""
         if restart or self.anim != name:
             self.anim = name
+            self.frame_ms = frame_ms or ANIMATIONS[name][1]
             self.frame_index = 0
             self.frame_elapsed = 0.0
 
@@ -209,7 +235,7 @@ class Parton:
         now = time.perf_counter()
         dt, self.last = min(now - self.last, 0.1), now
 
-        if self.state in ("idle", "run"):
+        if self.state == "run" or (self.state == "idle" and not self.pausing):
             # While calm, keep watch: if it sees the cursor, go after it.
             if self.sees_mouse(VISION_RANGE) is not None:
                 self.set_state("chase")
@@ -217,9 +243,14 @@ class Parton:
         if self.state == "idle":
             self.idle_left -= dt
             if self.idle_left <= 0:
-                # After the pause between swings, stay idle for a normal while;
-                # otherwise, go for a wander.
-                self.set_state("idle" if self.after_attack else "run")
+                # After a short pause, go back to the cursor if it is still in
+                # sight, or stay idle for a normal while. Otherwise, wander.
+                if not self.pausing:
+                    self.set_state("run")
+                elif self.sees_mouse(VISION_RANGE) is not None:
+                    self.set_state("chase")
+                else:
+                    self.set_state("idle")
         elif self.state == "run":
             self.move_towards(self.target, RUN_SPEED, dt)
             if self.x == self.target:
@@ -230,10 +261,20 @@ class Parton:
             self.move_towards(self.target, DASH_SPEED, dt)
             if self.x == self.target:        # has room now: turn around and re-evaluate
                 self.set_state("chase")
+        elif self.state == "jump":
+            self.jump(dt)
+        elif self.state == "air_attack":
+            # Hang still until the slash is over, then start falling.
+            self.fall(dt, 0.0 if self.frame_index <= AIR_SLASH_LAST_FRAME else 1.0)
 
-        if self.animate(dt) and self.state == "attack":
-            # Swing finished: short pause and keep watching.
-            self.set_state("idle", idle_seconds=ATTACK_PAUSE)
+        if self.animate(dt) and self.state in ("attack", "air_attack"):
+            if self.y > 0:
+                # Air swing finished: keep falling.
+                self.state = "jump"
+                self.set_anim("fall")
+            else:
+                # Swing finished: short pause and keep watching.
+                self.set_state("idle", idle_seconds=ATTACK_PAUSE)
 
         self.place()
         self.root.after(TICK_MS, self.tick)
@@ -255,7 +296,7 @@ class Parton:
         self.facing = 1 if dx >= 0 else -1
         if abs(dx) <= ATTACK_REACH:
             if height > ATTACK_HEIGHT:
-                self.set_anim("idle")        # too high for the axe: just watch it
+                self.set_state("jump")       # too high for the axe: jump at it
             elif abs(dx) < TOO_CLOSE:
                 self.dodge(dx)               # cursor on top of it: back off to hit it
             else:
@@ -270,6 +311,38 @@ class Parton:
         self.facing = 1 if dx >= 0 else -1
         # Against the screen edge and unable to get closer: wait and watch.
         self.set_anim("run" if self.x != before else "idle")
+
+    def jump(self, dt):
+        """Jump at the cursor: rise, swing if it gets in reach, fall and land."""
+        seen = self.sees_mouse(LOSE_RANGE)
+        if seen is not None:
+            dx, height = seen
+            if abs(dx) >= 1:
+                self.facing = 1 if dx > 0 else -1
+            # Drift so the cursor ends up at the axe's distance, not right overhead.
+            lo, hi = self.bounds()
+            target = min(max(self.x + dx - self.facing * ATTACK_REACH * 0.8, lo), hi)
+            self.move_towards(target, JUMP_DRIFT, dt)
+            self.facing = 1 if dx >= 0 else -1
+            # At the top of the jump, swing if the cursor is within the slash.
+            above = height - self.y
+            if (not self.air_swung and self.vy <= 0
+                    and TOO_CLOSE <= abs(dx) <= ATTACK_REACH
+                    and 0 <= above <= ATTACK_HEIGHT):
+                self.set_state("air_attack")
+                return
+        self.fall(dt, 1.0)
+        if self.state == "jump":
+            self.set_anim("jump" if self.vy > 0 else "fall")
+
+    def fall(self, dt, gravity_factor):
+        """Apply gravity; on landing, rest briefly (or finish the swing on the ground)."""
+        self.vy -= GRAVITY * gravity_factor * dt
+        self.y += self.vy * dt
+        if self.y <= 0:
+            self.y = self.vy = 0.0
+            if self.state == "jump":
+                self.set_state("idle", idle_seconds=JUMP_PAUSE)
 
     def dodge(self, dx):
         """Dash back so the cursor ends up at the axe's distance."""
@@ -293,7 +366,8 @@ class Parton:
     def animate(self, dt):
         """Advance the current animation. Returns True when a non-looping one has finished."""
         frames = self.frames[self.anim][self.facing]
-        _, ms, loops = ANIMATIONS[self.anim]
+        loops = ANIMATIONS[self.anim][2]
+        ms = self.frame_ms
         finished = False
         self.frame_elapsed += dt
         while self.frame_elapsed >= ms / 1000:
@@ -316,8 +390,10 @@ class Parton:
     def place(self):
         _, _, _, bottom = work_area()
         x = round(self.x - self.width / 2)
-        # Feet rest right on the taskbar; anything below them is transparent.
-        self.root.geometry(f"{self.width}x{self.height}+{x}+{bottom - self.ground}")
+        # Feet rest right on the taskbar (or above it while jumping); anything
+        # below them is transparent.
+        y = bottom - self.ground - round(self.y)
+        self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
 
     def keep_on_top(self):
         self.root.attributes("-topmost", True)
