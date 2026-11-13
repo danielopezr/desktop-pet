@@ -1,4 +1,5 @@
-"""Parton: a desktop pet for Windows ("Little Axion" character by Jesshiyoo).
+"""Parton: a desktop pet for Windows ("Little Axion" character by Jesshiyoo),
+together with a training dummy (dummy.py), both in this one program.
 
 - Lives at the bottom of the screen, standing on the taskbar.
 - Idles for a while and then runs to a random spot.
@@ -12,9 +13,11 @@
 - Left click and hold to pick it up; release it anywhere and it falls back
   down to the taskbar. Let go while moving the cursor and it is thrown in
   that direction, as fast as the cursor was moving.
-- A quick left click hits it; on the ninth hit it dies and the program
-  closes (run it again to bring it back).
-- Right click: menu to exit.
+- A quick left click hits it; on the ninth hit it dies and disappears.
+- Now and then, when the dummy is close enough, Parton goes to it and hits it
+  a few times.
+- Right click on either of them: menu to revive, hide or show each one, or
+  exit. If neither is left on the screen, the program closes.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
 are ready for later. The sprites are not included in the repository (see
@@ -29,6 +32,8 @@ from pathlib import Path
 from tkinter import messagebox
 
 from PIL import Image, ImageTk
+
+import dummy as training_dummy
 
 # --- Settings ------------------------------------------------------------------
 SCALE = 4                     # the character is ~27x22 px in the original sprite
@@ -47,6 +52,7 @@ LOSE_RANGE = 600              # beyond this distance it stops chasing
 ATTACK_REACH = 35 * SCALE     # axe reach (the slash reaches 26-43 px ahead)
 ATTACK_HEIGHT = 19 * SCALE    # top of the slash above its feet (sprite: 1-19 px)
 SLASH_CENTER = 10 * SCALE     # middle of the slash above its feet: where it aims
+SLASH_REACH = 43 * SCALE      # how far ahead of its body center the slash gets
 ATTACK_PAUSE = 0.35           # pause between swings, in seconds
 TOO_CLOSE = 20 * SCALE        # cursor on top of it: the axe would miss
 DASH_SPEED = 550              # pixels per second when dashing back
@@ -72,7 +78,15 @@ DRAG_THRESHOLD = 6            # pixels the cursor must move (relative to it) to 
 AIR_DRAG_THRESHOLD = 30       # same, while it is in the air (it's hard to track it exactly)
 HOLD_SECONDS = 0.25           # holding the button this long also picks it up
 HITS_TO_DIE = 9               # hits it takes before dying
-DEATH_LINGER = 1.5            # seconds it lies there after dying, before closing
+DEATH_LINGER = 1.5            # seconds it lies there after dying, before disappearing
+
+# Training on the dummy
+TRAIN_CHANCE = 0.4            # chance of training instead of wandering, after idling
+TRAIN_RANGE = 600             # only if the dummy is at most this far, in pixels
+TRAIN_SWINGS = (1, 3)         # how many swings per training session (min, max)
+TRAIN_PAUSE = 0.5             # pause between swings, in seconds
+TRAIN_GAP = ATTACK_REACH * 0.8  # distance from the dummy it swings from
+SLASH_FRAMES = {"attack1": (3,), "attack2": (3, 9)}  # frames where the slash lands
 
 SPRITES = Path(__file__).parent / "assets" / "sprites"
 
@@ -152,9 +166,56 @@ def to_photo(frame):
     return ImageTk.PhotoImage(bg.convert("RGB"))
 
 
-class Parton:
+class App:
+    """Owns both characters and the right-click menu they share."""
+
     def __init__(self):
         self.root = tk.Tk()
+        self.root.withdraw()                      # only the characters' windows show
+        self.dummy = training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
+        self.parton = Parton(self.root, self)
+
+    def characters(self):
+        return [(name, c) for name, c in (("Parton", self.parton), ("dummy", self.dummy)) if c]
+
+    def menu_items(self):
+        """(label, action) for each character: revive the dead, hide or show the living."""
+        items = []
+        for name, c in self.characters():
+            if not c.alive:
+                items.append((f"Revive {name}", c.revive))
+            elif c.hidden:
+                items.append((f"Show {name}", c.unhide))
+            else:
+                items.append((f"Hide {name}", c.hide))
+        return items
+
+    def show_menu(self, event):
+        """Menu built on the spot, so it always matches what is on the screen."""
+        menu = tk.Menu(self.root, tearoff=0)
+        for label, action in self.menu_items():
+            menu.add_command(label=label, command=lambda a=action: self.do(a))
+        menu.add_separator()
+        menu.add_command(label="Exit", command=self.root.destroy)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def do(self, action):
+        action()
+        self.check_empty()
+
+    def check_empty(self):
+        """With nobody left on the screen there is nothing to right-click: close."""
+        if not any(c.on_screen() for _, c in self.characters()):
+            self.root.destroy()
+
+    def run(self):
+        self.root.mainloop()
+
+
+class Parton:
+    def __init__(self, master, app):
+        self.app = app
+        self.root = tk.Toplevel(master)
         self.root.title("Parton")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -178,25 +239,58 @@ class Parton:
 
         self.label = tk.Label(self.root, bg=KEY_COLOR, bd=0)
         self.label.pack()
-        self.label.bind("<Button-3>", self.show_menu)
+        self.label.bind("<Button-3>", app.show_menu)
         self.label.bind("<ButtonPress-1>", self.press)
         self.label.bind("<ButtonRelease-1>", self.release)
         self.pressed = None                       # (time, x, y) of a left click in progress
-        self.hits = 0
-        self.menu = tk.Menu(self.root, tearoff=0)
-        self.menu.add_command(label="Exit", command=self.root.destroy)
-
-        lo, hi = self.bounds()
-        self.x = random.uniform(lo, hi)           # body center, in screen pixels
-        self.y = 0.0                              # height above the taskbar (jumps)
-        self.vy = 0.0                             # vertical speed, positive is up
-        self.facing = random.choice((1, -1))
+        self.dummy = app.dummy                    # None if the dummy's sprites are missing
         self.shown = None
         self.anim = None
-        self.set_state("idle")
+        self.spawn()
         self.last = time.perf_counter()
         self.tick()
         self.keep_on_top()
+
+    def spawn(self):
+        """Start fresh: full health, standing somewhere on the taskbar."""
+        lo, hi = self.bounds()
+        self.x = random.uniform(lo, hi)           # body center, in screen pixels
+        self.y = 0.0                              # height above the taskbar (jumps)
+        self.vx = self.vy = 0.0                   # speed, positive is right / up
+        self.facing = random.choice((1, -1))
+        self.hits = 0
+        self.alive = True
+        self.gone = False                         # dead and already gone from the screen
+        self.hidden = False                       # hidden from the menu
+        self.closing = False
+        self.training = False                     # in the middle of a session on the dummy
+        self.attack_target = "cursor"
+        self.set_state("idle")
+
+    # --- Menu actions ------------------------------------------------------------
+    def on_screen(self):
+        return not self.gone and not self.hidden
+
+    def hide(self):
+        self.hidden = True
+        self.pressed = None
+        self.root.withdraw()
+
+    def unhide(self):
+        self.hidden = False
+        self.root.deiconify()
+
+    def revive(self):
+        self.spawn()
+        self.root.deiconify()
+
+    def vanish(self):
+        """After dying and lying there a moment, it disappears until revived."""
+        if self.alive:                            # revived in the meantime
+            return
+        self.gone = True
+        self.root.withdraw()
+        self.app.check_empty()
 
     # --- Helpers ---------------------------------------------------------------
     def bounds(self):
@@ -213,9 +307,31 @@ class Parton:
             return dx, height
         return None
 
+    def dummy_in_range(self):
+        """True if the dummy is standing and close enough to go and train on it."""
+        return self.dummy_standing() and abs(self.dummy.center_x() - self.x) <= TRAIN_RANGE
+
+    def dummy_standing(self):
+        return self.dummy is not None and self.dummy.standing()
+
+    def slash_hits_dummy(self):
+        """True if a slash right now reaches the dummy, whatever it was aimed at."""
+        if not self.dummy_standing():
+            return False
+        d0, d1 = self.dummy.body_span()
+        a, b = sorted((self.x, self.x + self.facing * SLASH_REACH))
+        if b < d0 or a > d1:                 # not in front of it, or too far
+            return False
+        return self.y <= self.dummy.body_top()  # the slash starts at its feet
+
+    def face_dummy(self):
+        self.facing = 1 if self.dummy.center_x() > self.x else -1
+
     # --- States ----------------------------------------------------------------
-    def set_state(self, state, idle_seconds=None):
+    def set_state(self, state, idle_seconds=None, target="cursor"):
         self.state = state
+        if state in ("chase", "run", "jump", "dodge"):
+            self.training = False            # the cursor or a wander interrupts training
         if state in ("idle", "run"):
             self.set_anim(state, restart=True)
         # A short pause (after a swing or a jump): it keeps still and doesn't react.
@@ -231,7 +347,21 @@ class Parton:
         elif state == "chase":
             self.set_anim("run")
         elif state == "attack":
+            self.attack_target = target
             self.set_anim(random.choice(("attack1", "attack2")), restart=True)
+        elif state == "train":
+            # Walk up to the dummy, to the axe's distance, on the side it is on
+            # (or the other one if there is no room there).
+            self.training = True
+            lo, hi = self.bounds()
+            cx = self.dummy.center_x()
+            side = 1 if self.x >= cx else -1
+            for s in (side, -side):
+                self.target = cx + s * TRAIN_GAP
+                if lo <= self.target <= hi:
+                    break
+            self.target = min(max(self.target, lo), hi)
+            self.set_anim("run")
         elif state == "dodge":
             self.set_anim("dash", restart=True)
         elif state == "jump":
@@ -258,8 +388,11 @@ class Parton:
     def tick(self):
         now = time.perf_counter()
         dt, self.last = min(now - self.last, 0.1), now
+        if self.hidden or self.gone:             # off the screen: nothing to do
+            self.root.after(TICK_MS, self.tick)
+            return
 
-        if self.state == "run" or (self.state == "idle" and not self.pausing):
+        if self.state in ("run", "train") or (self.state == "idle" and not self.pausing):
             # While calm, keep watch: if it sees the cursor, go after it.
             if self.sees_mouse(VISION_RANGE) is not None:
                 self.set_state("chase")
@@ -268,13 +401,31 @@ class Parton:
             self.idle_left -= dt
             if self.idle_left <= 0:
                 # After a short pause, go back to the cursor if it is still in
-                # sight, or stay idle for a normal while. Otherwise, wander.
+                # sight, carry on training, or stay idle for a normal while.
+                # After a normal idle: sometimes train on the dummy, else wander.
                 if not self.pausing:
-                    self.set_state("run")
+                    if self.dummy_in_range() and random.random() < TRAIN_CHANCE:
+                        self.set_state("train")
+                    else:
+                        self.set_state("run")
                 elif self.sees_mouse(VISION_RANGE) is not None:
                     self.set_state("chase")
+                elif self.training and self.dummy_standing():
+                    self.face_dummy()
+                    self.set_state("attack", target="dummy")
                 else:
+                    self.training = False
                     self.set_state("idle")
+        elif self.state == "train":
+            if not self.dummy_standing():
+                self.training = False
+                self.set_state("idle")
+            else:
+                self.move_towards(self.target, RUN_SPEED, dt)
+                if self.x == self.target:    # in position: face it and start swinging
+                    self.face_dummy()
+                    self.swings_left = random.randint(*TRAIN_SWINGS)
+                    self.set_state("attack", target="dummy")
         elif self.state == "run":
             self.move_towards(self.target, RUN_SPEED, dt)
             if self.x == self.target:
@@ -300,8 +451,24 @@ class Parton:
         if self.pressed and self.state != "held":
             self.check_drag_start()
 
-        if self.animate(dt):
-            if self.state in ("attack", "air_attack"):
+        before = (self.anim, self.frame_index)
+        finished = self.animate(dt)
+        if (self.state in ("attack", "air_attack")
+                and self.anim == before[0] and self.frame_index != before[1]
+                and self.frame_index in SLASH_FRAMES.get(self.anim, ())
+                and self.slash_hits_dummy()):
+            self.dummy.take_hit()            # any slash that reaches the dummy hurts it
+
+        if finished:
+            if self.state == "attack" and self.attack_target == "dummy":
+                # Training swing finished: another one after a short pause, or done.
+                self.swings_left -= 1
+                if self.swings_left > 0 and self.dummy_standing():
+                    self.set_state("idle", idle_seconds=TRAIN_PAUSE)
+                else:
+                    self.training = False
+                    self.set_state("idle")
+            elif self.state in ("attack", "air_attack"):
                 if self.y > 0:
                     # Air swing finished: keep falling.
                     self.state = "jump"
@@ -317,7 +484,7 @@ class Parton:
                     self.set_state("idle", idle_seconds=ATTACK_PAUSE)
             elif self.state == "dead" and not self.closing:
                 self.closing = True
-                self.root.after(int(DEATH_LINGER * 1000), self.root.destroy)
+                self.root.after(int(DEATH_LINGER * 1000), self.vanish)
 
         self.place()
         self.root.after(TICK_MS, self.tick)
@@ -432,7 +599,9 @@ class Parton:
             self.facing = 1 if mx > self.x else -1
         self.vx = 0.0
         self.vy = min(self.vy, 0.0)
+        self.training = False
         self.state = "dead" if self.hits >= HITS_TO_DIE else "hurt"
+        self.alive = self.state != "dead"
         self.closing = False
         self.set_anim("death" if self.state == "dead" else "hurt", restart=True)
 
@@ -445,6 +614,7 @@ class Parton:
         wy = bottom - self.ground - self.y
         self.grab_offset = (min(max(mx - wx, 0), self.width), min(max(my - wy, 0), self.height))
         self.pressed = None
+        self.training = False
         self.state = "held"
         self.vx = self.vy = 0.0
         self.cursor_trail = []               # recent (time, x, y) of the cursor
@@ -559,12 +729,6 @@ class Parton:
         self.root.attributes("-topmost", True)
         self.root.after(5_000, self.keep_on_top)
 
-    def show_menu(self, event):
-        self.menu.tk_popup(event.x_root, event.y_root)
-
-    def run(self):
-        self.root.mainloop()
-
 
 if __name__ == "__main__":
     # Single instance: if Parton is already running, don't open another one.
@@ -584,4 +748,4 @@ if __name__ == "__main__":
             + "\n\nDownload the free \"Little Axion\" pack by Jesshiyoo "
               "(https://jesshiyoo.itch.io/) and copy its PNG files there. See README.md.")
         raise SystemExit(1)
-    Parton().run()
+    App().run()
