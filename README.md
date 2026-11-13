@@ -21,6 +21,9 @@ your taskbar and hunts your mouse cursor with its axe.
   anywhere: it falls back down to the taskbar. Let go while moving the mouse
   and it is **thrown** that way, as fast as you were moving, bouncing off the
   screen edges.
+- **Hit it** with a quick left click: it flinches and turns to face you. On
+  the ninth hit it **dies** and the program closes; run it again to bring it
+  back.
 - Right click it to **exit**. Only one Parton runs at a time.
 
 ## Requirements
@@ -78,6 +81,8 @@ The constants at the top of `parton.py` control its behavior:
 | `THROW_FACTOR`, `THROW_MAX_SPEED` | How much of the mouse speed a throw keeps, and its cap |
 | `THROW_FLICK_SPEED`, `THROW_FLICK_FACTOR` | From what mouse speed sharp flicks get stronger, and how much |
 | `AIR_DRAG`, `WALL_BOUNCE` | How quickly a throw slows down, and how much it bounces off the edges |
+| `DRAG_THRESHOLD`, `AIR_DRAG_THRESHOLD`, `HOLD_SECONDS` | How far you must move (on the ground / in the air), or how long you must hold, for a click to become a grab |
+| `HITS_TO_DIE`, `DEATH_LINGER` | Hits it takes to die, and how long it lies there before closing |
 
 ## Credits
 

@@ -12,6 +12,8 @@
 - Left click and hold to pick it up; release it anywhere and it falls back
   down to the taskbar. Let go while moving the cursor and it is thrown in
   that direction, as fast as the cursor was moving.
+- A quick left click hits it; on the ninth hit it dies and the program
+  closes (run it again to bring it back).
 - Right click: menu to exit.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
@@ -65,6 +67,13 @@ THROW_MAX_SPEED = 2400        # cap on the throw speed, in pixels per second
 AIR_DRAG = 1.8                # how quickly the air slows its sideways speed
 WALL_BOUNCE = 0.5             # share of speed it keeps when bouncing off a screen edge
 
+# Clicking: a quick click hits it; holding or dragging picks it up
+DRAG_THRESHOLD = 6            # pixels the cursor must move (relative to it) to start dragging
+AIR_DRAG_THRESHOLD = 30       # same, while it is in the air (it's hard to track it exactly)
+HOLD_SECONDS = 0.25           # holding the button this long also picks it up
+HITS_TO_DIE = 9               # hits it takes before dying
+DEATH_LINGER = 1.5            # seconds it lies there after dying, before closing
+
 SPRITES = Path(__file__).parent / "assets" / "sprites"
 
 # name: (file, milliseconds per frame, loops)
@@ -76,11 +85,10 @@ ANIMATIONS = {
     "dash":    ("Dash.png",      60, True),
     "jump":    ("Jump.png",     100, True),
     "fall":    ("Fall.png",     100, True),
-    # For later:
-    "death":   ("Death.png",     90, False),
     "hurt":    ("Hurt.png",     100, False),
+    "death":   ("Death.png",     90, False),
 }
-USED = ("idle", "run", "attack1", "attack2", "dash", "jump", "fall")
+USED = tuple(ANIMATIONS)
 
 
 def work_area():
@@ -171,8 +179,10 @@ class Parton:
         self.label = tk.Label(self.root, bg=KEY_COLOR, bd=0)
         self.label.pack()
         self.label.bind("<Button-3>", self.show_menu)
-        self.label.bind("<ButtonPress-1>", self.grab)
-        self.label.bind("<ButtonRelease-1>", self.drop)
+        self.label.bind("<ButtonPress-1>", self.press)
+        self.label.bind("<ButtonRelease-1>", self.release)
+        self.pressed = None                       # (time, x, y) of a left click in progress
+        self.hits = 0
         self.menu = tk.Menu(self.root, tearoff=0)
         self.menu.add_command(label="Exit", command=self.root.destroy)
 
@@ -284,15 +294,30 @@ class Parton:
             self.follow_cursor()
         elif self.state == "dropped":
             self.fly(dt)
+        elif self.state in ("hurt", "dead"):
+            self.fall(dt, 1.0)               # if hit in the air, it falls meanwhile
 
-        if self.animate(dt) and self.state in ("attack", "air_attack"):
-            if self.y > 0:
-                # Air swing finished: keep falling.
-                self.state = "jump"
-                self.set_anim("fall")
-            else:
-                # Swing finished: short pause and keep watching.
-                self.set_state("idle", idle_seconds=ATTACK_PAUSE)
+        if self.pressed and self.state != "held":
+            self.check_drag_start()
+
+        if self.animate(dt):
+            if self.state in ("attack", "air_attack"):
+                if self.y > 0:
+                    # Air swing finished: keep falling.
+                    self.state = "jump"
+                    self.set_anim("fall")
+                else:
+                    # Swing finished: short pause and keep watching.
+                    self.set_state("idle", idle_seconds=ATTACK_PAUSE)
+            elif self.state == "hurt":
+                if self.y > 0:
+                    self.state, self.vx, self.vy = "dropped", 0.0, min(self.vy, 0.0)
+                    self.set_anim("fall")
+                else:
+                    self.set_state("idle", idle_seconds=ATTACK_PAUSE)
+            elif self.state == "dead" and not self.closing:
+                self.closing = True
+                self.root.after(int(DEATH_LINGER * 1000), self.root.destroy)
 
         self.place()
         self.root.after(TICK_MS, self.tick)
@@ -362,20 +387,71 @@ class Parton:
             if self.state in ("jump", "dropped"):
                 self.set_state("idle", idle_seconds=JUMP_PAUSE)
 
-    # --- Drag and drop ---------------------------------------------------------
-    def grab(self, event):
-        """Pick it up: it hangs from the cursor at the point where it was grabbed."""
+    # --- Clicking: hit, or drag and drop -------------------------------------------
+    def press(self, event):
+        """Left button down: it becomes a hit or a grab depending on what follows."""
+        if self.state == "dead":
+            return
+        self.pressed = (time.perf_counter(), event.x_root, event.y_root)
         self.grab_offset = (event.x_root - self.root.winfo_x(),
                             event.y_root - self.root.winfo_y())
+
+    def check_drag_start(self):
+        """Moving the cursor or holding the button turns the click into a grab.
+
+        The cursor must move both on the screen and relative to Parton: keeping
+        the mouse still while it moves, or following it with the mouse while it
+        runs or flies, both still count as a click (a hit).
+        """
+        t, px, py = self.pressed
+        mx, my = mouse_pos()
+        _, _, _, bottom = work_area()
+        wx = self.x - self.width / 2                 # where its window is now
+        wy = bottom - self.ground - self.y
+        ox, oy = self.grab_offset
+        on_screen = max(abs(mx - px), abs(my - py))
+        on_parton = max(abs(mx - wx - ox), abs(my - wy - oy))
+        drift = min(on_screen, on_parton)
+        limit = AIR_DRAG_THRESHOLD if self.y > 0 else DRAG_THRESHOLD
+        if drift > limit or time.perf_counter() - t >= HOLD_SECONDS:
+            self.grab()
+
+    def release(self, _event):
+        """Left button up: a quick click is a hit; after a grab, it's a drop."""
+        if self.state == "held":
+            self.drop()
+        elif self.pressed and self.state != "dead":
+            self.hit()
+        self.pressed = None
+
+    def hit(self):
+        """Take a hit: flinch towards the cursor, or die on the last one."""
+        self.hits += 1
+        mx, _ = mouse_pos()
+        if abs(mx - self.x) >= 1:
+            self.facing = 1 if mx > self.x else -1
+        self.vx = 0.0
+        self.vy = min(self.vy, 0.0)
+        self.state = "dead" if self.hits >= HITS_TO_DIE else "hurt"
+        self.closing = False
+        self.set_anim("death" if self.state == "dead" else "hurt", restart=True)
+
+    def grab(self):
+        """Pick it up: it hangs from the cursor at the point where it was grabbed."""
+        # Hold it by wherever the cursor is on it now, so it doesn't jump.
+        mx, my = mouse_pos()
+        _, _, _, bottom = work_area()
+        wx = self.x - self.width / 2
+        wy = bottom - self.ground - self.y
+        self.grab_offset = (min(max(mx - wx, 0), self.width), min(max(my - wy, 0), self.height))
+        self.pressed = None
         self.state = "held"
         self.vx = self.vy = 0.0
         self.cursor_trail = []               # recent (time, x, y) of the cursor
         self.set_anim("fall")
 
-    def drop(self, _event):
+    def drop(self):
         """Let go: it flies off with the cursor's speed and direction, then falls."""
-        if self.state != "held":
-            return
         self.state = "dropped"
         vx, vy = self.cursor_speed()
         speed = (vx * vx + vy * vy) ** 0.5
