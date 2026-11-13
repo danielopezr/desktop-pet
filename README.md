@@ -30,9 +30,12 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
 
 The dummy (`dummy.py`) comes up together with Parton, in the same program:
 
-- It stands in the bottom-left corner of the screen, on the taskbar.
-- **Hit it** with a left click: the cursor turns into a sword over it.
-- Your hits and Parton's add up: on the 17th it **breaks** and disappears.
+- It starts in the bottom-left corner of the screen, on the taskbar.
+- **Hit it** with a quick left click: the cursor turns into a sword over it.
+- **Pick it up and throw it** just like Parton, but it is **twice as heavy**:
+  the same flick throws it half as fast, and it bounces less off the edges.
+- Your hits and Parton's add up, even while it is in the air: on the 17th it
+  **breaks** and disappears.
 
 ### The menu
 
@@ -59,33 +62,36 @@ redistributing them. To get them:
 
 1. Download the free **Luneblade – Little Axion** pack by Jesshiyoo from
    <https://jesshiyoo.itch.io/> and copy its PNG sprite sheets into
-   `assets/sprites/`.
+   `assets/parton/sprites/`.
 2. *(Optional, for the dummy)* Download the free **Training Dummy 2D Pixel
    Art** pack and copy its `IDLE.png`, `HIT.png` and `BREAKING.png` into
    `assets/dummy/sprites/`.
 3. *(Optional, for the sword cursor)* Download the free **Pixel Cursors &
-   Icons** pack by Willosuna from <https://willosuna.itch.io/>, leave the zip
-   (`pixel-cursors-icons-r4.zip`) in your Downloads folder and run
-   `python make_cursor.py`. It creates `assets/dummy/sword.cur`.
+   Icons** pack by Willosuna from <https://willosuna.itch.io/> and run
+   `python make_cursor.py`. It looks for `pixel-cursors-icons-r4.zip` in your
+   Downloads or `Pictures/Assets` folder (or pass its path as an argument) and
+   creates `assets/cursor/sword.cur`.
 
 ```
 assets/
-├── sprites/
-│   ├── Attack 1.png
-│   ├── Attack 2.png
-│   ├── Dash.png
-│   ├── Death.png
-│   ├── Fall.png
-│   ├── Hurt.png
-│   ├── Idle.png
-│   ├── Jump.png
-│   └── Run.png
-└── dummy/
-    ├── sword.cur
-    └── sprites/
-        ├── BREAKING.png
-        ├── HIT.png
-        └── IDLE.png
+├── parton/
+│   └── sprites/
+│       ├── Attack 1.png
+│       ├── Attack 2.png
+│       ├── Dash.png
+│       ├── Death.png
+│       ├── Fall.png
+│       ├── Hurt.png
+│       ├── Idle.png
+│       ├── Jump.png
+│       └── Run.png
+├── dummy/
+│   └── sprites/
+│       ├── BREAKING.png
+│       ├── HIT.png
+│       └── IDLE.png
+└── cursor/
+    └── sword.cur
 ```
 
 If any of Parton's sprites is missing, it shows a message listing the missing
@@ -113,18 +119,25 @@ The constants at the top of `parton.py` control its behavior:
 | `VISION_RANGE`, `VISION_HEIGHT` | How far it can see the cursor |
 | `ATTACK_REACH`, `ATTACK_HEIGHT`, `SLASH_CENTER` | How far and how high the axe slash reaches, and where it aims |
 | `TOO_CLOSE`, `DASH_SPEED` | When it dashes back, and how fast |
-| `JUMP_MAX_HEIGHT`, `GRAVITY`, `JUMP_PAUSE` | Highest jump, how fast it falls, and the rest between jumps |
+| `JUMP_MAX_HEIGHT`, `JUMP_PAUSE` | Highest jump, and the rest between jumps |
 | `AIR_ATTACK_FRAME_MS` | Speed of the mid-air swing |
-| `THROW_FACTOR`, `THROW_MAX_SPEED` | How much of the mouse speed a throw keeps, and its cap |
-| `THROW_FLICK_SPEED`, `THROW_FLICK_FACTOR` | From what mouse speed sharp flicks get stronger, and how much |
-| `AIR_DRAG`, `WALL_BOUNCE` | How quickly a throw slows down, and how much it bounces off the edges |
-| `DRAG_THRESHOLD`, `AIR_DRAG_THRESHOLD`, `HOLD_SECONDS` | How far you must move (on the ground / in the air), or how long you must hold, for a click to become a grab |
 | `HITS_TO_DIE`, `DEATH_LINGER` | Hits it takes to die, and how long it lies there before disappearing |
 | `TRAIN_CHANCE`, `TRAIN_RANGE` | How often it goes to train on the dummy, and from how far |
 | `TRAIN_SWINGS`, `TRAIN_PAUSE` | How many swings per training session, and the pause between them |
 
+`physics.py` holds what Parton and the dummy share:
+
+| Setting | What it changes |
+|---|---|
+| `GRAVITY` | How fast things fall |
+| `THROW_FACTOR`, `THROW_MAX_SPEED` | How much of the mouse speed a throw keeps, and its cap |
+| `THROW_FLICK_SPEED`, `THROW_FLICK_FACTOR` | From what mouse speed sharp flicks get stronger, and how much |
+| `AIR_DRAG`, `WALL_BOUNCE` | How quickly a throw slows down, and how much it bounces off the edges |
+| `DRAG_THRESHOLD`, `AIR_DRAG_THRESHOLD`, `HOLD_SECONDS` | How far you must move (on the ground / in the air), or how long you must hold, for a click to become a grab |
+
 The dummy has its own settings at the top of `dummy.py` (`SCALE`,
-`HITS_TO_DIE`, animation speeds and its distance from the screen edge).
+`HITS_TO_DIE`, `WEIGHT`, animation speeds and its starting distance from the
+screen edge).
 
 ## Credits
 

@@ -1,16 +1,22 @@
 """Training dummy that lives next to Parton, in the same program.
 
-- Sits in the bottom-left corner of the screen, standing on the taskbar.
-- Left click hits it (the cursor turns into a sword over it); Parton hits it too.
+- Starts in the bottom-left corner of the screen, standing on the taskbar.
+- A quick left click hits it (the cursor turns into a sword over it); Parton
+  hits it too.
+- Hold or drag to pick it up and throw it, like Parton, but it is twice as
+  heavy: it flies half as fast and bounces less.
 - On the 17th hit it breaks and disappears; it can be revived from the menu.
 - Right click: the shared menu (see App in parton.py).
 """
 import ctypes
+import time
 import tkinter as tk
 from ctypes import wintypes
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageFilter, ImageTk
+
+from physics import CursorTrail, fly_step, is_drag, throw_velocity
 
 # --- Settings ------------------------------------------------------------------
 SCALE = 4                 # 80x48 px frames; same pixel size as Parton
@@ -19,12 +25,14 @@ HITS_TO_DIE = 17
 HIT_FRAME_MS = 60
 BREAK_FRAME_MS = 90
 RUBBLE_VISIBLE_MS = 1_500  # how long the remains stay before it disappears
-MARGIN = 8                # distance from the screen edge
+MARGIN = 8                # distance from the screen edge where it starts
+WEIGHT = 2.0              # twice as heavy as Parton: thrown half as fast
+TICK_MS = 16              # update rate while held or flying (~60 fps)
 KEY_COLOR = "#ff00fe"     # color that becomes transparent
 
-ASSETS = Path(__file__).parent / "assets" / "dummy"
-SPRITES = ASSETS / "sprites"
-SWORD_CURSOR = ASSETS / "sword.cur"
+ASSETS = Path(__file__).parent / "assets"
+SPRITES = ASSETS / "dummy" / "sprites"
+SWORD_CURSOR = ASSETS / "cursor" / "sword.cur"
 SHEETS = ("IDLE", "HIT", "BREAKING")
 
 
@@ -38,6 +46,12 @@ def work_area():
     rect = wintypes.RECT()
     ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)  # SPI_GETWORKAREA
     return rect.left, rect.top, rect.right, rect.bottom
+
+
+def mouse_pos():
+    pt = wintypes.POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
 
 
 def raw_frames(name):
@@ -168,7 +182,8 @@ class TrainingDummy:
         cursor = f"@{SWORD_CURSOR.as_posix()}" if SWORD_CURSOR.exists() else "hand2"
         for widget in (self.label, self.hitbox):
             widget.config(cursor=cursor)
-            widget.bind("<Button-1>", lambda _e: self.take_hit())
+            widget.bind("<ButtonPress-1>", self.press)
+            widget.bind("<ButtonRelease-1>", self.release)
             widget.bind("<Button-3>", app.show_menu)
 
         self.hits = 0
@@ -176,15 +191,29 @@ class TrainingDummy:
         self.gone = False       # broken and already gone from the screen
         self.hidden = False     # hidden from the menu
         self.anim_job = None
+        self.pressed = None     # (time, x, y) of a left click in progress
+        self.reset_position()
 
-        self.place_bottom_left()
         shape_window(top_hwnd(self.hitbox), self.body_shape)  # hits only on the silhouette
         self.show_frame(self.idle[0])
         self.keep_on_top()
+        self.tick()
+
+    def reset_position(self):
+        """Back to its starting spot: bottom-left corner, on the taskbar."""
+        left, _, _, _ = work_area()
+        self.x = float(left + MARGIN)           # left edge of its window, on the screen
+        self.y = 0.0                            # height above the taskbar
+        self.vx = self.vy = 0.0
+        self.state = "rest"                     # "rest", "held" or "flying"
+        self.place()
 
     # --- State seen by Parton and the menu ----------------------------------------
     def standing(self):
-        """Standing and visible: Parton can train on it."""
+        """Standing still on the taskbar and visible: Parton can train on it."""
+        return self.alive and not self.hidden and self.state == "rest"
+
+    def can_be_hit(self):
         return self.alive and not self.hidden
 
     def on_screen(self):
@@ -193,21 +222,20 @@ class TrainingDummy:
 
     def center_x(self):
         """Screen x of the middle of its body."""
-        left, _, _, _ = work_area()
-        return left + MARGIN + (self.body[0] + self.body[2]) / 2
+        return self.x + (self.body[0] + self.body[2]) / 2
 
     def body_span(self):
         """Screen x where its body starts and ends."""
-        left, _, _, _ = work_area()
-        return left + MARGIN + self.body[0], left + MARGIN + self.body[2]
+        return self.x + self.body[0], self.x + self.body[2]
 
-    def body_top(self):
-        """Height of the top of its body above the taskbar, in pixels."""
-        return self.height - self.body[1]
+    def body_heights(self):
+        """Height of the bottom and the top of its body above the taskbar, in pixels."""
+        return self.y + self.height - self.body[3], self.y + self.height - self.body[1]
 
     # --- Menu actions ------------------------------------------------------------
     def hide(self):
         self.hidden = True
+        self.let_go()
         self.window.withdraw()
         self.hitbox.withdraw()
 
@@ -216,21 +244,89 @@ class TrainingDummy:
         self.window.deiconify()
         if self.alive:
             self.hitbox.deiconify()
-        self.place_bottom_left()
+        self.place()
 
     def revive(self):
         self.cancel_anim()
         self.hits = 0
         self.alive, self.gone, self.hidden = True, False, False
+        self.pressed = None
         self.show_frame(self.idle[0])
         self.window.deiconify()
         self.hitbox.deiconify()
-        self.place_bottom_left()
+        self.reset_position()
+
+    # --- Clicking: hit, or drag and throw (same as Parton) ---------------------------
+    def window_pos(self):
+        _, _, _, bottom = work_area()
+        return self.x, bottom - self.height - self.y
+
+    def press(self, event):
+        if not self.can_be_hit():
+            return
+        self.pressed = (time.perf_counter(), event.x_root, event.y_root)
+        wx, wy = self.window_pos()
+        self.grab_offset = (event.x_root - wx, event.y_root - wy)
+
+    def release(self, _event):
+        """Quick click: a hit. After a grab: a throw."""
+        if self.state == "held":
+            self.state = "flying"
+            vx, vy = self.trail.speed()
+            self.vx, self.vy = throw_velocity(vx, vy, WEIGHT)
+        elif self.pressed:
+            self.take_hit()
+        self.pressed = None
+
+    def grab(self):
+        # Hold it by wherever the cursor is on it now, so it doesn't jump.
+        mx, my = mouse_pos()
+        wx, wy = self.window_pos()
+        self.grab_offset = (min(max(mx - wx, 0), self.width), min(max(my - wy, 0), self.height))
+        self.pressed = None
+        self.state = "held"
+        self.vx = self.vy = 0.0
+        self.trail = CursorTrail()
+
+    def let_go(self):
+        """Stop holding it (hidden or broken while held): it just falls."""
+        self.pressed = None
+        if self.state == "held":
+            self.state, self.vx, self.vy = "flying", 0.0, 0.0
+
+    def bounds(self):
+        """Where its window's left edge can go, keeping the body on the screen."""
+        left, top, right, bottom = work_area()
+        return left - self.body[0], right - self.body[2], bottom - top - self.height
+
+    def tick(self):
+        if not self.hidden and not self.gone:
+            if self.pressed and self.state != "held":
+                if is_drag(self.pressed, mouse_pos(), self.window_pos(),
+                           self.grab_offset, self.y > 0):
+                    self.grab()
+            if self.state == "held":
+                mx, my = mouse_pos()
+                self.trail.add(mx, my)
+                lo, hi, ceiling = self.bounds()
+                _, _, _, bottom = work_area()
+                ox, oy = self.grab_offset
+                self.x = min(max(mx - ox, lo), hi)
+                self.y = min(max(bottom - self.height - (my - oy), 0.0), ceiling)
+                self.place()
+            elif self.state == "flying":
+                lo, hi, ceiling = self.bounds()
+                self.x, self.vx, self.y, self.vy = fly_step(
+                    self.x, self.vx, self.y, self.vy, TICK_MS / 1000, lo, hi, ceiling, WEIGHT)
+                if self.y == 0:                     # landed
+                    self.state, self.vx = "rest", 0.0
+                self.place()
+        self.master.after(TICK_MS, self.tick)
 
     # --- Window ----------------------------------------------------------------
-    def place_bottom_left(self):
-        left, _, _, bottom = work_area()
-        x, y = left + MARGIN, bottom - self.height
+    def place(self):
+        _, _, _, bottom = work_area()
+        x, y = round(self.x), round(bottom - self.height - self.y)
         self.window.geometry(f"{self.width}x{self.height}+{x}+{y}")
         bx0, by0, bx1, by1 = self.body
         self.hitbox.geometry(f"{bx1 - bx0}x{by1 - by0}+{x + bx0}+{y + by0}")
@@ -249,7 +345,9 @@ class TrainingDummy:
         if self.standing():
             self.hitbox.attributes("-topmost", True)
             self.window.attributes("-topmost", True)
-            self.place_bottom_left()
+            lo, hi, _ = self.bounds()
+            self.x = min(max(self.x, lo), hi)
+            self.place()
             self.stack_hitbox_below()
         self.master.after(5_000, self.keep_on_top)
 
@@ -273,8 +371,8 @@ class TrainingDummy:
             self.anim_job = None
 
     def take_hit(self):
-        """A hit from the cursor or from Parton."""
-        if not self.standing():
+        """A hit from the cursor or from Parton (also while held or flying)."""
+        if not self.can_be_hit():
             return
         self.hits += 1
         self.cancel_anim()
@@ -286,6 +384,7 @@ class TrainingDummy:
     def die(self):
         # It breaks and, after a moment, disappears until it is revived.
         self.alive = False
+        self.let_go()           # if it was held, the remains just fall
         self.hitbox.withdraw()  # the remains can't be hit
         self.play(self.breaking, BREAK_FRAME_MS,
                   on_done=lambda: self.master.after(RUBBLE_VISIBLE_MS, self.vanish))

@@ -21,7 +21,7 @@ together with a training dummy (dummy.py), both in this one program.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
 are ready for later. The sprites are not included in the repository (see
-README.md): put the pack's PNG files in assets/sprites.
+README.md): put the pack's PNG files in assets/parton/sprites.
 """
 import ctypes
 import random
@@ -34,6 +34,7 @@ from tkinter import messagebox
 from PIL import Image, ImageTk
 
 import dummy as training_dummy
+from physics import GRAVITY, CursorTrail, fly_step, is_drag, throw_velocity
 
 # --- Settings ------------------------------------------------------------------
 SCALE = 4                     # the character is ~27x22 px in the original sprite
@@ -58,25 +59,14 @@ TOO_CLOSE = 20 * SCALE        # cursor on top of it: the axe would miss
 DASH_SPEED = 550              # pixels per second when dashing back
 JUMP_MAX_HEIGHT = 160         # highest jump, in pixels (it jumps just enough to aim)
 JUMP_MIN_HEIGHT = 40          # lowest jump, in pixels
-GRAVITY = 2600                # pixels per second squared
 JUMP_DRIFT = 140              # sideways speed while in the air, towards the cursor
 JUMP_PAUSE = 0.6              # pause after landing before jumping again, in seconds
 AIR_ATTACK_FRAME_MS = 45      # the air swing plays faster than the ground one
 AIR_SLASH_LAST_FRAME = 8      # it hangs in the air until this frame of the swing
 
-# Throwing (when you drag it and let go)
-THROW_SAMPLE_SECONDS = 0.08   # cursor speed is measured over this last stretch
-THROW_FACTOR = 0.6            # share of the cursor speed it keeps when released
-THROW_FLICK_SPEED = 1500      # above this cursor speed, flicks get stronger...
-THROW_FLICK_FACTOR = 0.9      # ...up to this share at twice that speed
-THROW_MAX_SPEED = 2400        # cap on the throw speed, in pixels per second
-AIR_DRAG = 1.8                # how quickly the air slows its sideways speed
-WALL_BOUNCE = 0.5             # share of speed it keeps when bouncing off a screen edge
+# Gravity, throwing and click-vs-drag settings are shared with the dummy: see physics.py.
 
-# Clicking: a quick click hits it; holding or dragging picks it up
-DRAG_THRESHOLD = 6            # pixels the cursor must move (relative to it) to start dragging
-AIR_DRAG_THRESHOLD = 30       # same, while it is in the air (it's hard to track it exactly)
-HOLD_SECONDS = 0.25           # holding the button this long also picks it up
+# Getting hit
 HITS_TO_DIE = 9               # hits it takes before dying
 DEATH_LINGER = 1.5            # seconds it lies there after dying, before disappearing
 
@@ -88,7 +78,7 @@ TRAIN_PAUSE = 0.5             # pause between swings, in seconds
 TRAIN_GAP = ATTACK_REACH * 0.8  # distance from the dummy it swings from
 SLASH_FRAMES = {"attack1": (3,), "attack2": (3, 9)}  # frames where the slash lands
 
-SPRITES = Path(__file__).parent / "assets" / "sprites"
+SPRITES = Path(__file__).parent / "assets" / "parton" / "sprites"
 
 # name: (file, milliseconds per frame, loops)
 ANIMATIONS = {
@@ -316,13 +306,14 @@ class Parton:
 
     def slash_hits_dummy(self):
         """True if a slash right now reaches the dummy, whatever it was aimed at."""
-        if not self.dummy_standing():
+        if self.dummy is None or not self.dummy.can_be_hit():
             return False
         d0, d1 = self.dummy.body_span()
         a, b = sorted((self.x, self.x + self.facing * SLASH_REACH))
         if b < d0 or a > d1:                 # not in front of it, or too far
             return False
-        return self.y <= self.dummy.body_top()  # the slash starts at its feet
+        low, high = self.dummy.body_heights()  # the dummy may be held or flying
+        return self.y <= high and self.y + ATTACK_HEIGHT >= low
 
     def face_dummy(self):
         self.facing = 1 if self.dummy.center_x() > self.x else -1
@@ -350,17 +341,8 @@ class Parton:
             self.attack_target = target
             self.set_anim(random.choice(("attack1", "attack2")), restart=True)
         elif state == "train":
-            # Walk up to the dummy, to the axe's distance, on the side it is on
-            # (or the other one if there is no room there).
             self.training = True
-            lo, hi = self.bounds()
-            cx = self.dummy.center_x()
-            side = 1 if self.x >= cx else -1
-            for s in (side, -side):
-                self.target = cx + s * TRAIN_GAP
-                if lo <= self.target <= hi:
-                    break
-            self.target = min(max(self.target, lo), hi)
+            self.target = self.train_target()
             self.set_anim("run")
         elif state == "dodge":
             self.set_anim("dash", restart=True)
@@ -376,6 +358,18 @@ class Parton:
             self.air_swung = True
             self.vy = 0.0                    # hang at the top while swinging
             self.set_anim("attack1", restart=True, frame_ms=AIR_ATTACK_FRAME_MS)
+
+    def train_target(self):
+        """Spot at the axe's distance from the dummy, on the side Parton is on
+        (or the other one if there is no room there)."""
+        lo, hi = self.bounds()
+        cx = self.dummy.center_x()
+        side = 1 if self.x >= cx else -1
+        for s in (side, -side):
+            target = cx + s * TRAIN_GAP
+            if lo <= target <= hi:
+                return target
+        return min(max(cx + side * TRAIN_GAP, lo), hi)
 
     def set_anim(self, name, restart=False, frame_ms=None):
         """Switch animation; start from the first frame if it changes or if asked to."""
@@ -421,6 +415,7 @@ class Parton:
                 self.training = False
                 self.set_state("idle")
             else:
+                self.target = self.train_target()   # follow it if it was moved
                 self.move_towards(self.target, RUN_SPEED, dt)
                 if self.x == self.target:    # in position: face it and start swinging
                     self.face_dummy()
@@ -564,23 +559,10 @@ class Parton:
                             event.y_root - self.root.winfo_y())
 
     def check_drag_start(self):
-        """Moving the cursor or holding the button turns the click into a grab.
-
-        The cursor must move both on the screen and relative to Parton: keeping
-        the mouse still while it moves, or following it with the mouse while it
-        runs or flies, both still count as a click (a hit).
-        """
-        t, px, py = self.pressed
-        mx, my = mouse_pos()
+        """Moving the cursor or holding the button turns the click into a grab."""
         _, _, _, bottom = work_area()
-        wx = self.x - self.width / 2                 # where its window is now
-        wy = bottom - self.ground - self.y
-        ox, oy = self.grab_offset
-        on_screen = max(abs(mx - px), abs(my - py))
-        on_parton = max(abs(mx - wx - ox), abs(my - wy - oy))
-        drift = min(on_screen, on_parton)
-        limit = AIR_DRAG_THRESHOLD if self.y > 0 else DRAG_THRESHOLD
-        if drift > limit or time.perf_counter() - t >= HOLD_SECONDS:
+        window_pos = (self.x - self.width / 2, bottom - self.ground - self.y)
+        if is_drag(self.pressed, mouse_pos(), window_pos, self.grab_offset, self.y > 0):
             self.grab()
 
     def release(self, _event):
@@ -617,38 +599,19 @@ class Parton:
         self.training = False
         self.state = "held"
         self.vx = self.vy = 0.0
-        self.cursor_trail = []               # recent (time, x, y) of the cursor
+        self.cursor_trail = CursorTrail()
         self.set_anim("fall")
 
     def drop(self):
         """Let go: it flies off with the cursor's speed and direction, then falls."""
         self.state = "dropped"
-        vx, vy = self.cursor_speed()
-        speed = (vx * vx + vy * vy) ** 0.5
-        scale = THROW_FACTOR
-        if speed > THROW_FLICK_SPEED:        # sharp flicks keep more of their speed
-            t = min(1.0, (speed - THROW_FLICK_SPEED) / THROW_FLICK_SPEED)
-            scale = THROW_FACTOR + (THROW_FLICK_FACTOR - THROW_FACTOR) * t
-        if speed * scale > THROW_MAX_SPEED:  # cap very fast flicks
-            scale = THROW_MAX_SPEED / speed
-        self.vx = vx * scale
-        self.vy = -vy * scale                # screen y grows downwards; ours grows upwards
+        self.vx, self.vy = throw_velocity(*self.cursor_trail.speed())
         if abs(self.vx) > 50:
             self.facing = 1 if self.vx > 0 else -1
 
-    def cursor_speed(self):
-        """Cursor speed (pixels per second) over the last THROW_SAMPLE_SECONDS."""
-        now = time.perf_counter()
-        trail = [s for s in self.cursor_trail if now - s[0] <= THROW_SAMPLE_SECONDS]
-        if len(trail) < 2 or trail[-1][0] - trail[0][0] <= 0:
-            return 0.0, 0.0
-        (t0, x0, y0), (t1, x1, y1) = trail[0], trail[-1]
-        return (x1 - x0) / (t1 - t0), (y1 - y0) / (t1 - t0)
-
     def follow_cursor(self):
         mx, my = mouse_pos()
-        now = time.perf_counter()
-        self.cursor_trail = [s for s in self.cursor_trail if now - s[0] <= 0.5] + [(now, mx, my)]
+        self.cursor_trail.add(mx, my)
         _, _, _, bottom = work_area()
         lo, hi = self.bounds()
         ox, oy = self.grab_offset
@@ -659,20 +622,15 @@ class Parton:
         """Thrown: move with its own speed, slowed by the air, bouncing off the screen edges."""
         lo, hi = self.bounds()
         _, top, _, bottom = work_area()
-        self.vx *= max(0.0, 1.0 - AIR_DRAG * dt)
-        self.x += self.vx * dt
-        if self.x < lo or self.x > hi:       # side edges: bounce back
-            self.x = min(max(self.x, lo), hi)
-            self.vx = -self.vx * WALL_BOUNCE
-            if abs(self.vx) > 50:
-                self.facing = 1 if self.vx > 0 else -1
         ceiling = bottom - top - self.ground  # its window can't go above the screen
-        if self.y > ceiling:
-            self.y = ceiling
-            self.vy = -abs(self.vy) * WALL_BOUNCE
-        self.fall(dt, 1.0)
-        if self.state != "dropped":          # landed
+        before = self.vx
+        self.x, self.vx, self.y, self.vy = fly_step(self.x, self.vx, self.y, self.vy,
+                                                    dt, lo, hi, ceiling)
+        if before * self.vx < 0 and abs(self.vx) > 50:   # bounced: face the new way
+            self.facing = 1 if self.vx > 0 else -1
+        if self.y == 0:                      # landed
             self.vx = 0.0
+            self.set_state("idle", idle_seconds=JUMP_PAUSE)
 
     def dodge(self, dx):
         """Dash back so the cursor ends up at the axe's distance."""
@@ -744,7 +702,7 @@ if __name__ == "__main__":
         tk.Tk().withdraw()
         messagebox.showerror(
             "Parton",
-            "Sprites not found in assets/sprites:\n\n" + "\n".join(missing)
+            "Sprites not found in assets/parton/sprites:\n\n" + "\n".join(missing)
             + "\n\nDownload the free \"Little Axion\" pack by Jesshiyoo "
               "(https://jesshiyoo.itch.io/) and copy its PNG files there. See README.md.")
         raise SystemExit(1)
