@@ -9,7 +9,9 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
 - **Wanders** along the bottom of the screen, standing on the taskbar: it
   idles for a few seconds, then runs to a random spot.
 - **Trains** on the training dummy: now and then, when the dummy is close
-  enough, Parton walks up to it and hits it a few times.
+  enough, Parton walks up to it and hits it a few times. Once in a while the
+  dummy **hits back**: it swings on its post, takes one of Parton's hearts
+  and knocks him back, and a puzzled **"?"** floats up from his head.
 - **Chases the cursor** when it sees it nearby (up to 450 px to either side
   and 250 px above the taskbar). The cursor always comes before the dummy.
 - **Attacks** with one of its two axe swings, picked at random, once the
@@ -42,6 +44,8 @@ The dummy (`dummy.py`) comes up together with Parton, in the same program:
 
 - It starts in the bottom-left corner of the screen, on the taskbar.
 - **Hit it** with a quick left click: the cursor turns into a sword over it.
+  The yellow impact bursts from where it was hit (where you clicked, or
+  where Parton's axe or Parton himself struck it), flying out on that side.
 - **Pick it up and throw it** just like Parton, but it is **twice as heavy**:
   the same flick throws it half as fast, and it bounces less off the edges.
   Unlike Parton, landings don't hurt it.
@@ -71,12 +75,15 @@ to pick it; click anywhere else or press Escape to close it:
 - **Revive** a character that has died (the dummy without waiting).
 - **Hide** or **show** each one, to have only one of them on the screen. A
   hidden dummy doesn't come back on its own.
-- **Settings**, each one switched on or off with a click:
+- **Settings** opens the settings in the same spot; each one is switched on
+  or off with a click (the settings stay open so you can see the change), and
+  **Back** returns to the main menu:
   - **Calm mode** (off by default): Parton ignores the cursor, so he no
     longer chases or attacks it. You can still hit him.
   - **Do not disturb** (on by default): both hide while a full-screen app is
     in front (a game, a video, a presentation) and come back when it closes.
   - **Training** (on by default): Parton goes and hits the dummy now and then.
+  - **Dummy hits back** (on by default): the dummy sometimes hits Parton back.
 - **Exit** closes the program.
 
 The settings are saved in `%APPDATA%\Parton\settings.json`, so they are kept
@@ -174,6 +181,8 @@ The constants at the top of `parton.py` control its behavior:
 | `EVADE_CHANCE`, `EVADE_MARGIN` | How often it dodges a thrown dummy (the rest of the time it takes the hit), and how close to the last moment it waits before dodging |
 | `EVADE_JUMP_HEIGHT`, `EVADE_DASH_DISTANCE` | How high it jumps and how far it dashes to dodge |
 | `KNOCKBACK_FACTOR`, `KNOCKBACK_MAX`, `KNOCKBACK_LIFT` | How hard a hit from the dummy pushes Parton (share of its speed, cap) and how much it pops him up |
+| `COUNTER_CHANCE`, `COUNTER_DELAY_MS` | How often the dummy hits back after one of Parton's hits, and how long after |
+| `COUNTER_REACH`, `COUNTER_PUSH`, `COUNTER_LIFT` | How close Parton must still be for it to reach him, and how hard it knocks him back |
 | `FULLSCREEN_CHECK_MS` | How often "do not disturb" looks for a full-screen app |
 
 `physics.py` holds what Parton and the dummy share:
@@ -195,7 +204,9 @@ screen edge).
 `ui.py` draws the menu and the hearts: `UI_SCALE` sets their pixel size
 (keep it the same as the characters' `SCALE`), `HEART` is the heart's drawing, `TEXT_SCALE` the pixel size of
 the menu's text (half the characters', so the buttons stay small), `HEARTS_GAP` how far above the head
-the hearts sit and `HEART_GAP` the space between hearts.
+the hearts sit and `HEART_GAP` the space between hearts. `QUESTION` is the
+"?" drawing, and `EMOTE_SECONDS`, `EMOTE_RISE` and `EMOTE_FADE_FROM` how long
+it lasts, how far it floats up and when it starts fading.
 
 ## Credits
 

@@ -8,6 +8,7 @@ repository, see README.md), at half that pixel size so the buttons stay
 small. Without the font, the menu is the plain Windows one.
 """
 import ctypes
+import time
 import tkinter as tk
 from ctypes import wintypes
 from pathlib import Path
@@ -24,6 +25,7 @@ RED = (184, 50, 58, 255)          # button, and a full heart
 LIGHT_RED = (232, 112, 122, 255)  # button under the cursor
 DARK_RED = (122, 28, 35, 255)     # pressed button, and the buttons' bottom edge
 GRAY = (87, 82, 77, 255)          # empty heart
+GOLD = (255, 204, 64, 255)        # the "?" Parton shows when the dummy hits back
 HEARTS_GAP = 4            # pixels between the top of the head and the hearts
 HEART_GAP = 1             # between one heart and the next, in drawing pixels
 HEAD_ROWS = 3             # the top rows of a sprite that are only its head
@@ -35,6 +37,17 @@ HEART = (".#.#.",
          ".###.",
          "..#..")
 HALF_HEART_COLUMNS = 3
+
+# A 4x6 question mark, popped over a character's head (see Emote).
+QUESTION = (".##.",
+            "#..#",
+            "...#",
+            "..#.",
+            "....",
+            "..#.")
+EMOTE_SECONDS = 0.9       # how long an emote lasts
+EMOTE_RISE = 40           # how far it floats up meanwhile, in screen pixels
+EMOTE_FADE_FROM = 0.4     # share of its time it stays solid before fading out
 
 FONT = Path(__file__).parent / "assets" / "ui" / "Nanofon.ttf"
 
@@ -137,7 +150,7 @@ class PopupMenu:
     PAD_Y = 3             # above and below the text, in screen pixels
     VK_BUTTONS = (0x01, 0x02, 0x04)  # left, right and middle mouse buttons
 
-    def __init__(self, master, items, x, y, on_choose):
+    def __init__(self, master, items, x, y, on_choose, flip=True):
         self.on_choose = on_choose
         self.closed = False
         self.window = tk.Toplevel(master)
@@ -185,9 +198,10 @@ class PopupMenu:
         self.window.bind("<Escape>", lambda e: self.close())
 
         # Open at the cursor, kept inside the work area (above the cursor if
-        # there is no room below it).
+        # there is no room below it, unless `flip` is off: then it is just
+        # moved up enough to fit, to reopen where the last menu was).
         left, top, right, bottom = work_area()
-        if y + self.height > bottom:
+        if flip and y + self.height > bottom:
             y -= self.height
         x = min(max(x, left), right - self.width)
         y = min(max(y, top), bottom - self.height)
@@ -277,6 +291,54 @@ class PopupMenu:
 
 
 # --- Hearts ----------------------------------------------------------------------------
+class Emote:
+    """A little drawing (like QUESTION) that pops over a character's head,
+    floats up and fades away. It follows the character while it lasts and
+    lets the mouse through."""
+
+    def __init__(self, master, drawing, color):
+        self.window = tk.Toplevel(master)
+        self.window.overrideredirect(True)
+        self.window.attributes("-topmost", True)
+        self.window.attributes("-transparentcolor", KEY_COLOR)
+        self.window.config(bg=KEY_COLOR)
+        image = Image.new("RGBA", (len(drawing[0]), len(drawing)))
+        for y, row in enumerate(drawing):
+            for x, cell in enumerate(row):
+                if cell == "#":
+                    image.putpixel((x, y), color)
+        self.photo = to_photo(image)
+        tk.Label(self.window, image=self.photo, bg=KEY_COLOR, bd=0).pack()
+        self.window.withdraw()
+        make_click_through(self.window)
+        self.job = None
+
+    def show(self, head):
+        """Pop it over the head: `head()` gives the screen (x, y) of the top of the
+        head, asked again on every frame so it follows the character."""
+        if self.job:
+            self.window.after_cancel(self.job)
+        self.head = head
+        self.start = time.perf_counter()
+        self.window.attributes("-alpha", 1.0)
+        self.window.deiconify()
+        self.window.lift()
+        self.step()
+
+    def step(self):
+        t = (time.perf_counter() - self.start) / EMOTE_SECONDS
+        if t >= 1:
+            self.job = None
+            self.window.withdraw()
+            return
+        x, y = self.head()
+        w, h = self.photo.width(), self.photo.height()
+        self.window.geometry(f"{w}x{h}+{round(x - w / 2)}+{round(y - HEARTS_GAP - h - EMOTE_RISE * t)}")
+        fade = max(0.0, (t - EMOTE_FADE_FROM) / (1 - EMOTE_FADE_FROM))
+        self.window.attributes("-alpha", 1.0 - fade)
+        self.job = self.window.after(16, self.step)
+
+
 def head_center(mask, rows=HEAD_ROWS):
     """x of the middle of the head in a sprite's silhouette (white = solid).
 

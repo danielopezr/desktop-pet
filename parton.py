@@ -18,9 +18,11 @@ together with a training dummy (dummy.py), both in this one program.
   a few times.
 - When the dummy is thrown at it, it usually dodges: it jumps over a dummy
   coming from the side and dashes away from one falling on it.
-- Right click on either of them: menu to revive, hide or show each one, change
-  the settings (calm mode, do not disturb, training) or exit. If neither is
-  left on the screen, the program closes.
+- Now and then, when Parton hits the dummy, it swings back and hits him,
+  knocking him back a little; a puzzled "?" floats up from his head.
+- Right click on either of them: menu to revive, hide or show each one, open
+  the settings (calm mode, do not disturb, training, dummy fights back) or
+  exit. If neither is left on the screen, the program closes.
 - Calm mode: it ignores the cursor (no chasing or attacking).
 - Do not disturb: both hide while a full-screen app (a game, a video, a
   presentation) is in front, and come back when it closes.
@@ -105,6 +107,13 @@ EVADE_DASH_DISTANCE = 260     # how far it dashes out of the way, in pixels
 KNOCKBACK_FACTOR = 0.6        # share of the dummy's speed that pushes Parton when it hits him
 KNOCKBACK_MAX = 900           # cap on that push, in pixels per second
 KNOCKBACK_LIFT = 450          # the push also pops him up a little (upward speed)
+
+# The dummy hitting back
+COUNTER_CHANCE = 0.2          # chance that a hit from Parton makes the dummy swing back at him
+COUNTER_DELAY_MS = 250        # the swing back comes this long after his hit
+COUNTER_REACH = 40            # it only reaches Parton if he is this close to it, in pixels
+COUNTER_PUSH = 450            # how hard it pushes him away (sideways speed)
+COUNTER_LIFT = 350            # and how much it pops him up (upward speed)
 EVADE_STATES = ("idle", "run", "train", "chase", "flee", "attack", "dodge")  # it can dodge from these
 
 # Menu settings, saved between runs
@@ -113,8 +122,10 @@ DEFAULT_SETTINGS = {
     "calm": False,            # ignore the cursor: no chasing or attacking it
     "do_not_disturb": True,   # hide while a full-screen app is in front
     "training": True,         # go and hit the dummy now and then
+    "dummy_hits_back": True,  # the dummy sometimes hits Parton back
 }
-SETTING_LABELS = {"calm": "Calm mode", "do_not_disturb": "Do not disturb", "training": "Training"}
+SETTING_LABELS = {"calm": "Calm mode", "do_not_disturb": "Do not disturb",
+                  "training": "Training", "dummy_hits_back": "Dummy hits back"}
 FULLSCREEN_CHECK_MS = 1000    # how often "do not disturb" looks for a full-screen app
 
 SPRITES = Path(__file__).parent / "assets" / "parton" / "sprites"
@@ -298,6 +309,10 @@ class App:
         self.root.after(FULLSCREEN_CHECK_MS, self.watch_fullscreen)
 
     def show_menu(self, event):
+        """Right click: the main menu, at the cursor."""
+        self.open_menu(event.x_root, event.y_root)
+
+    def open_menu(self, x, y, flip=True):
         """Menu built on the spot, so it always matches what is on the screen.
 
         Pixel-art if the font is in assets/ui; otherwise the plain Windows menu.
@@ -305,17 +320,33 @@ class App:
         if self.menu:
             self.menu.close()
         if ui.available():
-            items = (self.menu_items() + [None] + self.setting_items()
-                     + [None, ("Exit", self.root.destroy)])
-            self.menu = ui.PopupMenu(self.root, items, event.x_root, event.y_root, self.do)
+            items = self.menu_items() + [("Settings", self.in_place(self.open_settings)),
+                                         None, ("Exit", self.root.destroy)]
+            self.menu = ui.PopupMenu(self.root, items, x, y, self.do, flip)
             return
         menu = tk.Menu(self.root, tearoff=0)
-        for section in (self.menu_items(), self.setting_items()):
-            for label, action in section:
-                menu.add_command(label=label, command=lambda a=action: self.do(a))
-            menu.add_separator()
+        for label, action in self.menu_items():
+            menu.add_command(label=label, command=lambda a=action: self.do(a))
+        settings = tk.Menu(menu, tearoff=0)
+        for label, action in self.setting_items():
+            settings.add_command(label=label, command=lambda a=action: self.do(a))
+        menu.add_cascade(label="Settings", menu=settings)
+        menu.add_separator()
         menu.add_command(label="Exit", command=self.root.destroy)
-        menu.tk_popup(event.x_root, event.y_root)
+        menu.tk_popup(x, y)
+
+    def open_settings(self, x, y):
+        """The settings submenu, where the menu was. It stays open after switching one."""
+        if self.menu:
+            self.menu.close()
+        items = [(label, self.in_place(lambda x, y, a=action: (a(), self.open_settings(x, y))))
+                 for label, action in self.setting_items()]
+        items += [None, ("Back", self.in_place(lambda x, y: self.open_menu(x, y, flip=False)))]
+        self.menu = ui.PopupMenu(self.root, items, x, y, self.do, flip=False)
+
+    def in_place(self, open_next):
+        """An action that opens `open_next` where the current menu is."""
+        return lambda: open_next(self.menu.x, self.menu.y)
 
     def do(self, action):
         action()
@@ -376,6 +407,7 @@ class Parton:
         self.evade_roll = 0                       # the last dummy throw it decided to dodge or not
         self.evade_planned = False                # ...and whether it will dodge that one
         self.hearts = ui.Hearts(master)         # shown while the cursor is over it
+        self.question = ui.Emote(master, ui.QUESTION, ui.GOLD)  # puzzled when the dummy hits back
         self.shown = None
         self.anim = None
         self.spawn()
@@ -485,6 +517,13 @@ class Parton:
             return False
         low, high = self.dummy.body_heights()  # the dummy may be held or flying
         return self.y <= high and self.y + ATTACK_HEIGHT >= low
+
+    def point_on_dummy(self, height):
+        """Screen point where Parton strikes the dummy: on the side of its body
+        that faces him, `height` pixels above his feet."""
+        _, _, _, bottom = work_area()
+        return self.dummy.surface_point(bottom - self.y - height,
+                                        from_left=self.x < self.dummy.center_x())
 
     def face_dummy(self):
         self.facing = 1 if self.dummy.center_x() > self.x else -1
@@ -636,8 +675,10 @@ class Parton:
                 and self.anim == before[0] and self.frame_index != before[1]
                 and self.frame_index in SLASH_FRAMES.get(self.anim, ())
                 and self.slash_hits_dummy()):
-            if self.dummy.take_hit():        # any slash that reaches the dummy hurts it
+            if self.dummy.take_hit(self.point_on_dummy(SLASH_CENTER)):   # any slash that reaches it hurts it
                 self.celebrate_pending = True    # ...and if that broke it: celebrate
+            elif self.app.settings["dummy_hits_back"] and random.random() < COUNTER_CHANCE:
+                self.root.after(COUNTER_DELAY_MS, self.dummy_hits_back)
 
         self.check_impacts(dt)
 
@@ -935,7 +976,7 @@ class Parton:
         if (self.state == "dropped" and not self.impact_done
                 and self.impact_speed(self.vx, self.vy, self.y, d_top, dt) >= IMPACT_SPEED):
             self.impact_done = True
-            d.take_hit()
+            d.take_hit(self.point_on_dummy(self.body_height / 2))
             self.vx = -self.vx * IMPACT_BOUNCE       # bounce off it
         if (d.state == "flying" and not d.impact_done and self.alive and self.state != "held"
                 and self.impact_speed(d.vx, d.vy, d_low, self.y + self.body_height,
@@ -944,10 +985,37 @@ class Parton:
             push = self.knockback_speed(d)
             d.vx = -d.vx * IMPACT_BOUNCE
             self.hit()                       # the dummy landed on Parton...
-            self.vx, self.vy = push, KNOCKBACK_LIFT   # ...and pushes him away
-            self.y = max(self.y, 0.1)        # off the ground
-            if abs(push) >= 1:
-                self.facing = -1 if push > 0 else 1   # facing the dummy that hit him
+            self.knock(push, KNOCKBACK_LIFT)  # ...and pushes him away
+
+    def knock(self, vx, lift):
+        """Pushed by a hit: it flies off sideways with a little hop (see knocked),
+        facing whatever hit it."""
+        self.vx, self.vy = vx, lift
+        self.y = max(self.y, 0.1)            # off the ground
+        if abs(vx) >= 1:
+            self.facing = -1 if vx > 0 else 1
+
+    def dummy_hits_back(self):
+        """The dummy swings back after one of Parton's hits: if he is still right
+        next to it, it hits him and knocks him away."""
+        d = self.dummy
+        if (d is None or not d.standing() or not self.alive or self.away
+                or self.state in ("held", "dropped", "evade")):
+            return
+        l, r, b, _ = self.body_box()
+        d0, d1 = d.body_span()
+        _, d_top = d.body_heights()
+        if max(d0 - r, l - d1) > COUNTER_REACH or b > d_top:
+            return                           # he has moved away (or is above it)
+        d.swing_back()
+        self.hit()
+        self.knock(COUNTER_PUSH if self.x >= d.center_x() else -COUNTER_PUSH, COUNTER_LIFT)
+        self.question.show(self.head_top)    # "?": he didn't see that coming
+
+    def head_top(self):
+        """Screen (x, y) of the top of its head, where things pop over it."""
+        _, _, _, bottom = work_area()
+        return self.x + self.facing * self.head_offset, bottom - self.y - self.body_height
 
     def knockback_speed(self, d):
         """Sideways speed the dummy's hit gives Parton: in the direction the dummy

@@ -2,7 +2,7 @@
 
 - Starts in the bottom-left corner of the screen, standing on the taskbar.
 - A quick left click hits it (the cursor turns into a sword over it); Parton
-  hits it too.
+  hits it too. The yellow impact of the hit shows up where it was hit.
 - Hold or drag to pick it up and throw it, like Parton, but it is twice as
   heavy: it flies half as fast and bounces less. Thrown at Parton, it hurts
   him.
@@ -33,6 +33,7 @@ MARGIN = 8                # distance from the screen edge where it starts
 WEIGHT = 2.0              # twice as heavy as Parton: thrown half as fast
 TICK_MS = 16              # update rate while held or flying (~60 fps)
 KEY_COLOR = "#ff00fe"     # color that becomes transparent
+IMPACT_COLOR = (255, 200, 37)  # the yellow sparks in HIT.png: moved to where each hit lands
 
 ASSETS = Path(__file__).parent / "assets"
 SPRITES = ASSETS / "dummy" / "sprites"
@@ -138,16 +139,32 @@ def shape_window(hwnd, mask):
 
 
 def load_frames(name, box):
-    frames = []
-    for frame in raw_frames(name):
-        frame = frame.crop(box)
-        frame = frame.resize((frame.width * SCALE, frame.height * SCALE), Image.NEAREST)
-        # tkinter only supports full transparency: semi-transparent pixels become
-        # opaque or invisible, and the background is painted with the key color.
-        bg = Image.new("RGBA", frame.size, KEY_COLOR)
-        bg.paste(frame, mask=solid_mask(frame))
-        frames.append(ImageTk.PhotoImage(bg.convert("RGB")))
-    return frames
+    return [to_photo(frame.crop(box)) for frame in raw_frames(name)]
+
+
+def to_photo(frame):
+    frame = frame.resize((frame.width * SCALE, frame.height * SCALE), Image.NEAREST)
+    # tkinter only supports full transparency: semi-transparent pixels become
+    # opaque or invisible, and the background is painted with the key color.
+    bg = Image.new("RGBA", frame.size, KEY_COLOR)
+    bg.paste(frame, mask=solid_mask(frame))
+    return ImageTk.PhotoImage(bg.convert("RGB"))
+
+
+def split_impact(frames):
+    """Split each frame into the dummy alone and the yellow impact sparks alone."""
+    bodies, sparks = [], []
+    for frame in frames:
+        body, spark = frame.copy(), Image.new("RGBA", frame.size)
+        body_px, spark_px = body.load(), spark.load()
+        for y in range(frame.height):
+            for x in range(frame.width):
+                if body_px[x, y][:3] == IMPACT_COLOR and body_px[x, y][3]:
+                    spark_px[x, y] = body_px[x, y]
+                    body_px[x, y] = (0, 0, 0, 0)
+        bodies.append(body)
+        sparks.append(spark)
+    return bodies, sparks
 
 
 class TrainingDummy:
@@ -170,6 +187,13 @@ class TrainingDummy:
         self.head_x = ui.head_center(solid_mask(raw_frames("IDLE")[0].crop(box))) * SCALE
         self.idle = load_frames("IDLE", box)
         self.hit = load_frames("HIT", box)
+        # The hit without its sparks, and the sparks alone, to put them where it is hit.
+        self.hit_bodies, self.hit_sparks = split_impact([f.crop(box) for f in raw_frames("HIT")])
+        self.hit_plain = [to_photo(f) for f in self.hit_bodies]
+        first = next(s for s in self.hit_sparks if s.getbbox())
+        x0, y0, x1, y1 = first.getbbox()
+        self.spark_origin = ((x0 + x1) / 2, (y0 + y1) / 2)   # where the sparks burst from
+        self.hit_cache = {}                     # (x, y, mirrored) -> frames
         self.breaking = load_frames("BREAKING", box)
 
         # Hit zone: a nearly invisible window behind the body. The dummy's
@@ -311,7 +335,7 @@ class TrainingDummy:
             vx, vy = self.trail.speed()
             self.vx, self.vy = throw_velocity(vx, vy, WEIGHT)
         elif self.pressed:
-            self.take_hit()
+            self.take_hit(self.pressed[1:])     # where the click was
         self.pressed = None
 
     def grab(self):
@@ -427,9 +451,9 @@ class TrainingDummy:
             self.master.after_cancel(self.anim_job)
             self.anim_job = None
 
-    def take_hit(self):
-        """A hit from the cursor or from Parton (also while held or flying).
-        Returns True if this hit broke it."""
+    def take_hit(self, point=None):
+        """A hit from the cursor or from Parton (also while held or flying), at the
+        screen `point` (x, y) it landed on, if known. Returns True if this hit broke it."""
         if not self.can_be_hit():
             return False
         self.hits += 1
@@ -437,8 +461,60 @@ class TrainingDummy:
         if self.hits >= HITS_TO_DIE:
             self.die()
             return True
-        self.play(self.hit, HIT_FRAME_MS, on_done=lambda: self.show_frame(self.idle[0]))
+        frames = self.hit if point is None else self.hit_frames_at(point)
+        self.play(frames, HIT_FRAME_MS, on_done=lambda: self.show_frame(self.idle[0]))
         return False
+
+    def surface_point(self, screen_y, from_left):
+        """Screen point on the edge of its silhouette, at height `screen_y`, seen
+        from the left or from the right: where something coming from that side
+        strikes it (a row with nothing solid uses the nearest one that has)."""
+        wx, wy = self.window_pos()
+        mask = self.body_shape
+        left, top = wx + self.body[0], wy + self.body[1]
+        row = min(max(round(screen_y - top), 0), mask.height - 1)
+        for distance in range(mask.height):
+            for r in (row - distance, row + distance):
+                if 0 <= r < mask.height:
+                    solid = [x for x in range(mask.width) if mask.getpixel((x, r))]
+                    if solid:
+                        inset = 2 * SCALE        # a little into the body, not on its very edge
+                        x = solid[0] + inset if from_left else solid[-1] - inset
+                        return left + x, top + r
+        return left + mask.width / 2, top + row
+
+    def hit_frames_at(self, point):
+        """The hit animation with its sparks bursting from the screen `point`.
+
+        The point is kept on its body. Hit on its left half, the sparks are
+        mirrored so they fly out to the left.
+        """
+        wx, wy = self.window_pos()
+        bx0, by0, bx1, by1 = (v / SCALE for v in self.body)
+        x = min(max((point[0] - wx) / SCALE, bx0), bx1 - 1)
+        y = min(max((point[1] - wy) / SCALE, by0), by1 - 1)
+        mirrored = x < (bx0 + bx1) / 2
+        key = (round(x), round(y), mirrored)
+        if key not in self.hit_cache:
+            ox, oy = self.spark_origin
+            if mirrored:
+                ox = self.hit_sparks[0].width - ox
+            frames = []
+            for body, sparks in zip(self.hit_bodies, self.hit_sparks):
+                if mirrored:
+                    sparks = sparks.transpose(Image.FLIP_LEFT_RIGHT)
+                moved = Image.new("RGBA", body.size)
+                moved.paste(sparks, (round(x - ox), round(y - oy)), sparks)
+                frame = body.copy()
+                frame.alpha_composite(moved)
+                frames.append(to_photo(frame))
+            self.hit_cache[key] = frames
+        return self.hit_cache[key]
+
+    def swing_back(self):
+        """Hit back at Parton: it swings on its post (the hit wobble)."""
+        self.cancel_anim()
+        self.play(self.hit_plain, HIT_FRAME_MS, on_done=lambda: self.show_frame(self.idle[0]))
 
     def speed(self):
         return (self.vx * self.vx + self.vy * self.vy) ** 0.5
