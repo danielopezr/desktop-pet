@@ -1656,10 +1656,12 @@ class Parton:
         real throw, together with its own motion: it stands still for `delay`
         seconds and then does `move`, "stay", "jump" or "dash" (see evade).
         Returns (seconds until the hit, "side" or "above"), or None if the
-        dummy misses, falls short or is too slow to hurt.
+        dummy misses, falls short, lands on a window first or is too slow to hurt.
         """
         d = self.dummy
         lo, hi, ceiling = d.bounds()
+        ledges = d.ledges
+        middle = (d.body[0] + d.body[2]) / 2     # its body's middle, from its window's left edge
         x, vx, y, vy = d.x, d.vx, d.y, d.vy
         px, py, pvy = self.x, 0.0, 0.0
         target = self.dash_target() if move == "dash" else px
@@ -1667,7 +1669,12 @@ class Parton:
         step = 1 / 60
         for i in range(1, round(EVADE_LOOKAHEAD / step) + 1):
             was_over = px + self.body_half >= x + d.body[0] and px - self.body_half <= x + d.body[2]
+            feet = y + d.feet_offset()
             x, vx, y, vy = fly_step(x, vx, y, vy, step, lo, hi, ceiling, training_dummy.WEIGHT)
+            if vy <= 0:
+                spot = platforms.landing(ledges, x + middle, feet, y + d.feet_offset())
+                if spot is not None and spot[1] is not None:
+                    return None                  # a window catches it on the way
             if i * step <= delay:
                 pass                             # still waiting
             elif move == "jump":

@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    # Windows only: the program talks to Windows itself (taskbar, windows, tray).
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]   # the oldest supported, and the newest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -r requirements.txt
+      # The sprites can't be in the repository, so the tests that run the whole
+      # program skip themselves here; physics, window tops, settings and the
+      # interface are tested.
+      - run: python -m unittest -v

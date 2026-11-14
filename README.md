@@ -1,5 +1,7 @@
 # Parton Desktop Pet
 
+[![Tests](https://github.com/danielopezr/parton-desktop-pet/actions/workflows/tests.yml/badge.svg)](https://github.com/danielopezr/parton-desktop-pet/actions/workflows/tests.yml)
+
 A small desktop pet for Windows, written in Python with Tkinter. Parton is the
 "Little Axion" character from the *Luneblade* pack by Jesshiyoo. It lives on
 your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
@@ -218,6 +220,10 @@ It runs every test in `tests/` (about a minute and a half), with nothing to inst
   mid-air swing, dodging and knockback, the dummy hitting back, where the
   impacts land, the hearts, the cursors, the menu and settings, and do not
   disturb.
+
+GitHub Actions runs them on every push, on Windows with Python 3.10 and 3.14
+(`.github/workflows/tests.yml`). The sprites aren't there, so only the tests
+that don't need them run.
 
 The tests simulate the cursor and the open windows (the real mouse is never
 moved, and your windows are never looked at) and use a

@@ -415,6 +415,14 @@ class Dodging(AppCase):
     def test_it_ignores_a_throw_that_falls_short(self):
         self.assertEqual(self.hits_from(1.0, gap=350, vx=700.0, y=20.0, vy=450.0), (0, False))
 
+    def test_it_stays_put_when_a_window_will_catch_the_dummy(self):
+        self.park_parton()
+        top = int(self.bottom - 250)                     # a window right above him
+        self.windows.append((1, (int(self.p.x - 300), top, int(self.p.x + 300), top + 200)))
+        self.pump(parton.PLATFORM_SCAN_MS / 1000 + 0.1)
+        self.assertEqual(self.hits_from(1.0, y=450.0, vy=-600.0), (0, False))
+        self.assertEqual(self.d.platform, 1)             # it stayed up there
+
     def test_it_waits_until_the_last_moment(self):
         with mock.patch.object(parton, "EVADE_CHANCE", 1.0):
             self.park_parton()
