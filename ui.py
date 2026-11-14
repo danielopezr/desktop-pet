@@ -47,6 +47,13 @@ QUESTION = (".##.",
             "..#.",
             "....",
             "..#.")
+# A 2x6 exclamation mark, popped over Parton's head when he spots the cursor.
+EXCLAMATION = ("##",
+               "##",
+               "##",
+               "##",
+               "..",
+               "##")
 EMOTE_SECONDS = 0.9       # how long an emote lasts
 EMOTE_RISE = 40           # how far it floats up meanwhile, in screen pixels
 EMOTE_FADE_FROM = 0.4     # share of its time it stays solid before fading out

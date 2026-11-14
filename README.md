@@ -6,8 +6,8 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
 
 ![Parton chasing the cursor, the dummy being hit and thrown, Parton dodging it and getting hit back](docs/demo.gif)
 
-*Recorded from the program itself, with a simulated cursor. Art by Jesshiyoo
-(Parton) and Mattz Art (the dummy).*
+*Recorded from the program itself, with a simulated cursor
+(`tools/record_demo.py`). Art by Jesshiyoo (Parton) and Mattz Art (the dummy).*
 
 ## What it does
 
@@ -18,7 +18,8 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
   dummy **hits back**: it swings on its post, takes one of Parton's hearts
   and knocks him back, and a puzzled **"?"** floats up from his head.
 - **Chases the cursor** when it sees it nearby (up to 450 px to either side
-  and 250 px above the taskbar). The cursor always comes before the dummy.
+  and 250 px above the taskbar): a **"!"** pops over its head as it spots
+  it. The cursor always comes before the dummy.
 - **Attacks** with one of its two axe swings, picked at random, once the
   cursor is within reach.
 - **Jumps** at the cursor when it is close but higher than the axe can reach,
@@ -165,6 +166,39 @@ pythonw parton.py
 It brings up Parton and the dummy. `pythonw` runs it without a console
 window; `python parton.py` also works.
 
+## Tests
+
+```
+python -m unittest
+```
+
+It runs every test in `tests/` (about 45 seconds), with nothing to install:
+
+- `test_physics.py`: throwing, falling, bouncing and the click-or-drag rule.
+- `test_settings.py`: saving and loading the settings.
+- `test_ui.py`: the menu, hearts, "!" and "?", text and cursors.
+- `test_app.py`: Parton and the dummy together: chasing and calm mode, the
+  mid-air swing, dodging and knockback, the dummy hitting back, where the
+  impacts land, the hearts, the cursors, the menu and settings, and do not
+  disturb.
+
+The tests simulate the cursor (the real mouse is never moved) and use a
+temporary folder instead of your settings and cursor files. The ones in
+`test_app.py` run the real program, so Parton and the dummy pop up on the
+screen while they run; without the sprites they are skipped.
+
+## Recording the demo GIF
+
+```
+python tools/record_demo.py
+```
+
+It records the scripted scene in `docs/demo.gif` (or the path you pass it).
+Every frame is drawn from the program's own images on a plain backdrop, with
+a simulated cursor: nothing is captured from your screen and the real mouse
+is never moved. It takes about 15 seconds, with Parton and the dummy on the
+screen meanwhile.
+
 ## Settings
 
 The constants at the top of `parton.py` control its behavior:
@@ -214,9 +248,10 @@ screen edge).
 `ui.py` draws the menu and the hearts: `UI_SCALE` sets their pixel size
 (keep it the same as the characters' `SCALE`), `HEART` is the heart's drawing, `TEXT_SCALE` the pixel size of
 the menu's text (half the characters', so the buttons stay small), `HEARTS_GAP` how far above the head
-the hearts sit and `HEART_GAP` the space between hearts. `QUESTION` is the
-"?" drawing, and `EMOTE_SECONDS`, `EMOTE_RISE` and `EMOTE_FADE_FROM` how long
-it lasts, how far it floats up and when it starts fading.
+the hearts sit and `HEART_GAP` the space between hearts. `EXCLAMATION` and
+`QUESTION` are the "!" and "?" drawings, and `EMOTE_SECONDS`, `EMOTE_RISE`
+and `EMOTE_FADE_FROM` how long they last, how far they float up and when they
+start fading.
 
 ## Credits
 

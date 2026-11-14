@@ -18,6 +18,7 @@ together with a training dummy (dummy.py), both in this one program.
   a few times.
 - When the dummy is thrown at it, it usually dodges: it jumps over a dummy
   coming from the side and dashes away from one falling on it.
+- When it spots the cursor and starts chasing it, a "!" pops over its head.
 - Now and then, when Parton hits the dummy, it swings back and hits him,
   knocking him back a little; a puzzled "?" floats up from his head.
 - Right click on either of them: menu to revive, hide or show each one, open
@@ -440,6 +441,8 @@ class Parton:
         self.evade_planned = False                # ...and whether it will dodge that one
         self.hearts = ui.Hearts(master)         # shown while the cursor is over it
         self.question = ui.Emote(master, ui.QUESTION, ui.GOLD)  # puzzled when the dummy hits back
+        self.alert = ui.Emote(master, ui.EXCLAMATION, ui.GOLD)  # "!" when it spots the cursor
+        self.on_cursor = False                    # in the middle of a chase after the cursor
         self.shown = None
         self.anim = None
         self.spawn()
@@ -567,6 +570,14 @@ class Parton:
     # --- States ----------------------------------------------------------------
     def set_state(self, state, idle_seconds=None, target="cursor"):
         self.state = state
+        # "!" when a new chase starts: not between swings of the same one. The
+        # chase is over once it calms down, wanders, trains, celebrates or flees.
+        if state == "chase":
+            if not self.on_cursor:
+                self.alert.show(self.head_top)
+            self.on_cursor = True
+        elif state in ("run", "train", "celebrate", "flee") or (state == "idle" and idle_seconds is None):
+            self.on_cursor = False
         if state in ("chase", "flee", "run", "jump", "dodge", "evade"):
             self.training = False            # the cursor or a wander interrupts training
         if state in ("idle", "run"):
