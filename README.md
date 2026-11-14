@@ -96,14 +96,9 @@ redistributing them. To get them:
    `python make_cursor.py`. It looks for `pixel-cursors-icons-r4.zip` in your
    Downloads or `Pictures/Assets` folder (or pass its path as an argument) and
    creates `assets/cursor/sword.cur`.
-4. *(Optional, for the styled menu and the hearts)* Download the free
-   **Fantasy UI Kit Lite** by Willosuna from <https://willosuna.itch.io/> and
-   copy these files from its `x1/` folder into `assets/ui/` (without their
-   subfolders): `button_ruby_normal.png`, `button_ruby_hover.png`,
-   `button_ruby_pressed.png`, `heart_full.png`, `heart_half.png` and
-   `heart_empty.png`. Their
-   black outline is removed when they load, to match the characters. Add the **Nanofon** pixel font as `assets/ui/Nanofon.ttf`.
-
+4. *(Optional, for the pixel-art menu)* Copy the **Nanofon** pixel font to
+   `assets/ui/Nanofon.ttf`. The menu's buttons and the hearts are drawn by
+   the program itself, so nothing else is needed.
 ```
 assets/
 ├── parton/
@@ -125,15 +120,13 @@ assets/
 ├── cursor/
 │   └── sword.cur
 └── ui/
-    ├── Nanofon.ttf
-    ├── button_ruby_normal.png, button_ruby_hover.png, button_ruby_pressed.png
-    └── heart_full.png, heart_half.png, heart_empty.png
+    └── Nanofon.ttf
 ```
 
 If any of Parton's sprites is missing, it shows a message listing the missing
 files. Without the dummy's sprites, Parton runs alone; without the sword
-cursor, the dummy shows a hand cursor. Without the UI pieces, the menu is the
-plain Windows one and the hearts are plain red and gray squares.
+cursor, the dummy shows a hand cursor. Without the font, the menu is the plain
+Windows one (the hearts don't need anything).
 
 ## Running it
 
@@ -182,16 +175,17 @@ The dummy has its own settings at the top of `dummy.py` (`SCALE`,
 `HITS_TO_DIE`, `RESPAWN_SECONDS`, `WEIGHT`, animation speeds and its starting distance from the
 screen edge).
 
-`ui.py` draws the menu and the hearts: `UI_SCALE` sets their size (the
-kit's pieces are drawn at that multiple), `HEARTS_GAP` how far above the head
+`ui.py` draws the menu and the hearts: `UI_SCALE` sets their pixel size
+(keep it the same as the characters' `SCALE`), `HEART` is the heart's drawing, `TEXT_SCALE` the pixel size of
+the menu's text (half the characters', so the buttons stay small), `HEARTS_GAP` how far above the head
 the hearts sit and `HEART_GAP` the space between hearts.
 
 ## Credits
 
 - Parton art by [Jesshiyoo](https://jesshiyoo.itch.io/).
 - Dummy art by [Mattz Art](https://xzany.itch.io/).
-- Sword cursor, menu and heart art (Fantasy UI Kit Lite) by
-  [Willosuna](https://willosuna.itch.io/).
+- Sword cursor art by [Willosuna](https://willosuna.itch.io/); the menu and
+  hearts use the colors of their Fantasy UI Kit Lite.
 - Nanofon pixel font.
 
 ## License

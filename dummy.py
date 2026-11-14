@@ -342,7 +342,7 @@ class TrainingDummy:
 
     def update_hearts(self):
         """Show its health above its head while the cursor is over its body."""
-        if not self.can_be_hit():               # broken or hidden
+        if not self.can_be_hit() or self.state == "held":   # broken, hidden or picked up
             self.hearts.hide()
             return
         left, right = self.body_span()

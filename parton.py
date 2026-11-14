@@ -194,7 +194,7 @@ class App:
     def show_menu(self, event):
         """Menu built on the spot, so it always matches what is on the screen.
 
-        Drawn with the UI kit if it is in assets/ui; otherwise the plain Windows menu.
+        Pixel-art if the font is in assets/ui; otherwise the plain Windows menu.
         """
         if self.menu:
             self.menu.close()
@@ -545,7 +545,7 @@ class Parton:
         _, _, _, bottom = work_area()
         mx, my = mouse_pos()
         head_y = bottom - t
-        if self.alive and l <= mx <= r and head_y <= my <= bottom - b:
+        if self.alive and self.state != "held" and l <= mx <= r and head_y <= my <= bottom - b:
             head_x = self.x + self.facing * self.head_offset
             self.hearts.show(head_x, head_y, HITS_TO_DIE - self.hits, HITS_TO_DIE)
         else:
