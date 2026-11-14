@@ -43,7 +43,7 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
 The dummy (`dummy.py`) comes up together with Parton, in the same program:
 
 - It starts in the bottom-left corner of the screen, on the taskbar.
-- **Hit it** with a quick left click: the cursor turns into a sword over it.
+- **Hit it** with a quick left click.
   The yellow impact bursts from where it was hit (where you clicked, or
   where Parton's axe or Parton himself struck it), flying out on that side.
 - **Pick it up and throw it** just like Parton, but it is **twice as heavy**:
@@ -65,6 +65,16 @@ The dummy (`dummy.py`) comes up together with Parton, in the same program:
   was flying (or away from it, if it fell on him) with a little hop.
 - A gentle toss doesn't hurt: from the side only the sideways speed counts,
   and falling on top of the other one, the whole speed. One hit per throw.
+
+### The cursor
+
+Over Parton or the dummy, the cursor turns into a **sword**: its tip is the
+point you hit with. While you hold one of them it becomes a **closed hand**,
+and when you let go it goes back to the sword. Over a dead Parton or a
+breaking dummy there is nothing to hit, so it stays the normal arrow; so does
+the menu. Both cursors are pixel drawings made by the program (`SWORD` and
+`FIST` in `ui.py`) and saved as `.cur` files in `%APPDATA%\Parton\cursors`
+when it starts.
 
 ### The menu
 
@@ -111,12 +121,7 @@ redistributing them. To get them:
 2. *(Optional, for the dummy)* Download the free **Training Dummy 2D Pixel
    Art** pack by Mattz Art from <https://xzany.itch.io/> and copy its
    `IDLE.png`, `HIT.png` and `BREAKING.png` into `assets/dummy/sprites/`.
-3. *(Optional, for the sword cursor)* Download the free **Pixel Cursors &
-   Icons** pack by Willosuna from <https://willosuna.itch.io/> and run
-   `python make_cursor.py`. It looks for `pixel-cursors-icons-r4.zip` in your
-   Downloads or `Pictures/Assets` folder (or pass its path as an argument) and
-   creates `assets/cursor/sword.cur`.
-4. *(Optional, for the pixel-art menu)* Copy the **Nanofon** pixel font to
+3. *(Optional, for the pixel-art menu)* Copy the **Nanofon** pixel font to
    `assets/ui/Nanofon.ttf`. The menu's buttons and the hearts are drawn by
    the program itself, so nothing else is needed.
 ```
@@ -137,16 +142,14 @@ assets/
 │       ├── BREAKING.png
 │       ├── HIT.png
 │       └── IDLE.png
-├── cursor/
-│   └── sword.cur
 └── ui/
     └── Nanofon.ttf
 ```
 
 If any of Parton's sprites is missing, it shows a message listing the missing
-files. Without the dummy's sprites, Parton runs alone; without the sword
-cursor, the dummy shows a hand cursor. Without the font, the menu is the plain
-Windows one (the hearts don't need anything).
+files. Without the dummy's sprites, Parton runs alone. Without the font, the menu
+is the plain Windows one. The hearts and the cursors are drawn by the program
+itself, so they need no files.
 
 ## Running it
 
@@ -171,6 +174,8 @@ The constants at the top of `parton.py` control its behavior:
 | `TOO_CLOSE`, `DASH_SPEED` | When it dashes back, and how fast |
 | `JUMP_MAX_HEIGHT`, `JUMP_PAUSE` | Highest jump, and the rest between jumps |
 | `AIR_ATTACK_FRAME_MS` | Speed of the mid-air swing |
+| `AIR_ATTACK_FIRST_FRAME`, `AIR_ATTACK_LAST_FRAME` | Which frames of the swing it plays in mid-air (no wind-up or recovery on the ground) |
+| `AIR_ATTACK_GRAVITY` | How slowly it drifts down while swinging in mid-air |
 | `HITS_TO_DIE`, `DEATH_LINGER` | Hits it takes to die (keep it even: two hits per heart), and how long it lies there before disappearing |
 | `HEAL_DELAY`, `HEAL_INTERVAL` | How long without being hit before it heals, and how often it heals a hit |
 | `FLEE_AT`, `FLEE_DASH_DISTANCE` | With how many hits left it runs away, and how close the cursor must be for it to dash |
@@ -212,8 +217,8 @@ it lasts, how far it floats up and when it starts fading.
 
 - Parton art by [Jesshiyoo](https://jesshiyoo.itch.io/).
 - Dummy art by [Mattz Art](https://xzany.itch.io/).
-- Sword cursor art by [Willosuna](https://willosuna.itch.io/); the menu and
-  hearts use the colors of their Fantasy UI Kit Lite.
+- The menu, hearts and cursors use the colors of the Fantasy UI Kit Lite by
+  [Willosuna](https://willosuna.itch.io/).
 - Nanofon pixel font.
 
 ## License

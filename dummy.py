@@ -35,9 +35,7 @@ TICK_MS = 16              # update rate while held or flying (~60 fps)
 KEY_COLOR = "#ff00fe"     # color that becomes transparent
 IMPACT_COLOR = (255, 200, 37)  # the yellow sparks in HIT.png: moved to where each hit lands
 
-ASSETS = Path(__file__).parent / "assets"
-SPRITES = ASSETS / "dummy" / "sprites"
-SWORD_CURSOR = ASSETS / "cursor" / "sword.cur"
+SPRITES = Path(__file__).parent / "assets" / "dummy" / "sprites"
 SHEETS = ("IDLE", "HIT", "BREAKING")
 
 
@@ -104,40 +102,6 @@ def body_mask(names, box, body):
     return mask.crop(body)
 
 
-def top_hwnd(widget):
-    """HWND of the Windows window that contains `widget`."""
-    user32 = ctypes.windll.user32
-    user32.GetAncestor.restype = wintypes.HWND
-    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
-    widget.update_idletasks()
-    return user32.GetAncestor(widget.winfo_id(), 2)  # GA_ROOT
-
-
-def shape_window(hwnd, mask):
-    """Clip window `hwnd` to the white pixels of `mask` (only there it gets the mouse)."""
-    gdi32 = ctypes.windll.gdi32
-    gdi32.CreateRectRgn.restype = wintypes.HRGN
-    gdi32.CombineRgn.argtypes = [wintypes.HRGN, wintypes.HRGN, wintypes.HRGN, ctypes.c_int]
-    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
-    ctypes.windll.user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
-    region = gdi32.CreateRectRgn(0, 0, 0, 0)
-    w, h = mask.size
-    px = mask.load()
-    for y in range(h):
-        x = 0
-        while x < w:
-            if px[x, y]:
-                start = x
-                while x < w and px[x, y]:
-                    x += 1
-                run = gdi32.CreateRectRgn(start, y, x, y + 1)
-                gdi32.CombineRgn(region, region, run, 2)  # RGN_OR
-                gdi32.DeleteObject(run)
-            else:
-                x += 1
-    ctypes.windll.user32.SetWindowRgn(hwnd, region, True)  # Windows takes ownership of the region
-
-
 def load_frames(name, box):
     return [to_photo(frame.crop(box)) for frame in raw_frames(name)]
 
@@ -196,22 +160,14 @@ class TrainingDummy:
         self.hit_cache = {}                     # (x, y, mirrored) -> frames
         self.breaking = load_frames("BREAKING", box)
 
-        # Hit zone: a nearly invisible window behind the body. The dummy's
-        # transparent pixels let the mouse through to the desktop; without this
-        # zone, the cursor would jump to the arrow at every gap in the pixel art.
-        self.hitbox = tk.Toplevel(master)
-        self.hitbox.overrideredirect(True)
-        self.hitbox.attributes("-topmost", True)
-        self.hitbox.attributes("-alpha", 0.01)
-        self.hitbox.config(bg="black")
+        self.hitbox = ui.hit_zone(master)       # behind its body, shaped like it
 
         self.label = tk.Label(self.window, bg=KEY_COLOR, bd=0)
         self.label.pack()
 
-        # Sword cursor over the dummy (the hand if the file is missing).
-        cursor = f"@{SWORD_CURSOR.as_posix()}" if SWORD_CURSOR.exists() else "hand2"
+        # Sword cursor over it; a closed hand while holding it.
         for widget in (self.label, self.hitbox):
-            widget.config(cursor=cursor)
+            widget.config(cursor=ui.cursor("sword"))
             widget.bind("<ButtonPress-1>", self.press)
             widget.bind("<ButtonRelease-1>", self.release)
             widget.bind("<Button-3>", app.show_menu)
@@ -228,7 +184,7 @@ class TrainingDummy:
         self.hearts = ui.Hearts(master)  # shown while the cursor is over it
         self.reset_position()
 
-        shape_window(top_hwnd(self.hitbox), self.body_shape)  # hits only on the silhouette
+        ui.shape_window(ui.top_hwnd(self.hitbox), self.body_shape)  # hits only on the silhouette
         self.show_frame(self.idle[0])
         self.keep_on_top()
         self.tick()
@@ -311,6 +267,7 @@ class TrainingDummy:
         self.hits = 0
         self.alive, self.gone, self.hidden = True, False, False
         self.pressed = None
+        self.set_cursor("sword")
         self.show_frame(self.idle[0])
         self.reset_position()
         self.show_windows()
@@ -331,6 +288,7 @@ class TrainingDummy:
         """Quick click: a hit. After a grab: a throw."""
         if self.state == "held":
             self.state = "flying"
+            self.set_cursor("sword")
             self.throws += 1
             vx, vy = self.trail.speed()
             self.vx, self.vy = throw_velocity(vx, vy, WEIGHT)
@@ -345,6 +303,7 @@ class TrainingDummy:
         self.grab_offset = (min(max(mx - wx, 0), self.width), min(max(my - wy, 0), self.height))
         self.pressed = None
         self.state = "held"
+        self.set_cursor("fist")
         self.vx = self.vy = 0.0
         self.trail = CursorTrail()
         self.impact_done = False  # one hit on Parton per throw, at most
@@ -354,6 +313,12 @@ class TrainingDummy:
         self.pressed = None
         if self.state == "held":
             self.state, self.vx, self.vy = "flying", 0.0, 0.0
+            self.set_cursor("sword")
+
+    def set_cursor(self, name):
+        """The cursor over it: "sword", "fist", or None for the normal arrow."""
+        for widget in (self.label, self.hitbox):
+            widget.config(cursor=ui.cursor(name) if name else "")
 
     def bounds(self):
         """Where its window's left edge can go, keeping the body on the screen."""
@@ -409,12 +374,7 @@ class TrainingDummy:
 
     def stack_hitbox_below(self):
         """Put the hit zone right below the dummy in the window order."""
-        user32 = ctypes.windll.user32
-        user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-                                        ctypes.c_int, ctypes.c_int, wintypes.UINT]
-        # SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
-        user32.SetWindowPos(top_hwnd(self.hitbox), top_hwnd(self.label),
-                            0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010)
+        ui.stack_below(self.hitbox, self.label)
 
     def keep_on_top(self):
         # Re-assert "always on top" and the position (in case the taskbar changes).
@@ -523,7 +483,8 @@ class TrainingDummy:
         # It breaks and, after a moment, disappears until it is revived.
         self.alive = False
         self.let_go()           # if it was held, the remains just fall
-        self.hitbox.withdraw()  # the remains can't be hit
+        self.hitbox.withdraw()  # the remains can't be hit...
+        self.set_cursor(None)   # ...so no sword over them
         self.play(self.breaking, BREAK_FRAME_MS,
                   on_done=lambda: self.master.after(RUBBLE_VISIBLE_MS, self.vanish))
 

@@ -8,6 +8,9 @@ repository, see README.md), at half that pixel size so the buttons stay
 small. Without the font, the menu is the plain Windows one.
 """
 import ctypes
+import io
+import os
+import struct
 import time
 import tkinter as tk
 from ctypes import wintypes
@@ -67,6 +70,161 @@ def work_area():
     rect = wintypes.RECT()
     ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)  # SPI_GETWORKAREA
     return rect.left, rect.top, rect.right, rect.bottom
+
+
+# --- Cursors ---------------------------------------------------------------------
+# Drawn here, like everything else: an 8x8 drawing gets a 1-pixel outline in a
+# dark blue (not black: dark enough to see on light backgrounds, softer than
+# black on dark ones) and is scaled x3, to fill the standard 32x32 cursor.
+CURSOR_SCALE = 3
+CURSOR_SIZE = 32
+CURSOR_OUTLINE = (40, 52, 74, 255)
+CURSOR_PALETTE = {
+    "b": (222, 230, 240, 255),   # blade
+    "s": (150, 166, 188, 255),   # blade, shade
+    "g": (232, 176, 48, 255),    # guard and pommel, gold
+    "h": (128, 78, 44, 255),     # grip
+    "k": (196, 128, 76, 255),    # glove
+    "d": (150, 94, 52, 255),     # glove creases
+    "c": (232, 176, 48, 255),    # cuff, gold
+}
+SWORD = ("bs......",             # its tip (top left) is the point that clicks
+         "sbs.....",
+         ".sbs....",
+         "..sbs..g",
+         "...sb.g.",
+         ".....g..",
+         "....g.h.",
+         "...g...g")
+FIST = (".k.k.k..",              # a closed hand: while holding a character
+        "kkkkkkk.",
+        "kdkdkdk.",
+        "kkkkkkkk",
+        "dddkkkkk",
+        ".kkkkkk.",
+        "..cccc..",
+        "..cccc..")
+# The pixel that clicks, in the drawing with its outline (the outline adds 1).
+CURSOR_HOTSPOTS = {"sword": (1, 1), "fist": (4, 4)}
+CURSOR_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Parton" / "cursors"
+
+
+def cursor_drawing(rows):
+    """An 8x8 drawing ("." is empty) with its outline around it."""
+    core = Image.new("RGBA", (len(rows[0]) + 2, len(rows) + 2))
+    for y, row in enumerate(rows):
+        for x, cell in enumerate(row):
+            if cell != ".":
+                core.putpixel((x + 1, y + 1), CURSOR_PALETTE[cell])
+    out = core.copy()
+    for y in range(core.height):
+        for x in range(core.width):
+            if core.getpixel((x, y))[3]:
+                continue
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if 0 <= nx < core.width and 0 <= ny < core.height and core.getpixel((nx, ny))[3]:
+                    out.putpixel((x, y), CURSOR_OUTLINE)
+                    break
+    return out
+
+
+def write_cursor(drawing, path, hotspot):
+    """Save `drawing` as a Windows .cur file clicking at `hotspot` (drawing pixels)."""
+    big = drawing.resize((drawing.width * CURSOR_SCALE, drawing.height * CURSOR_SCALE), Image.NEAREST)
+    canvas = Image.new("RGBA", (CURSOR_SIZE, CURSOR_SIZE))
+    canvas.paste(big, (0, 0))
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="ICO", sizes=[(CURSOR_SIZE, CURSOR_SIZE)], bitmap_format="bmp")
+    data = bytearray(buffer.getvalue())
+    # A .cur is an .ico with type 2 and the hotspot where the .ico keeps its
+    # planes and bit count (in the first, and only, image entry).
+    struct.pack_into("<H", data, 2, 2)
+    centre = CURSOR_SCALE // 2
+    struct.pack_into("<HH", data, 6 + 4, hotspot[0] * CURSOR_SCALE + centre,
+                     hotspot[1] * CURSOR_SCALE + centre)
+    path.write_bytes(data)
+
+
+_cursors = None
+
+
+def cursor(name):
+    """Tk cursor for "sword" (over a character) or "fist" (holding one).
+
+    The .cur files are made at start-up in %APPDATA%\\Parton\\cursors; if that
+    fails, Windows' own hand and move cursors stand in.
+    """
+    global _cursors
+    if _cursors is None:
+        try:
+            CURSOR_DIR.mkdir(parents=True, exist_ok=True)
+            _cursors = {}
+            for key, rows in (("sword", SWORD), ("fist", FIST)):
+                path = CURSOR_DIR / f"{key}.cur"
+                write_cursor(cursor_drawing(rows), path, CURSOR_HOTSPOTS[key])
+                _cursors[key] = "{@" + path.as_posix() + "}"   # braces: the path may have spaces
+        except OSError:
+            _cursors = {"sword": "hand2", "fist": "fleur"}
+    return _cursors[name]
+
+
+# --- Window helpers ------------------------------------------------------------------
+def top_hwnd(widget):
+    """HWND of the Windows window that contains `widget`."""
+    user32 = ctypes.windll.user32
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    widget.update_idletasks()
+    return user32.GetAncestor(widget.winfo_id(), 2)  # GA_ROOT
+
+
+def shape_window(hwnd, mask):
+    """Clip window `hwnd` to the white pixels of `mask` (only there it gets the mouse)."""
+    gdi32 = ctypes.windll.gdi32
+    gdi32.CreateRectRgn.restype = wintypes.HRGN
+    gdi32.CombineRgn.argtypes = [wintypes.HRGN, wintypes.HRGN, wintypes.HRGN, ctypes.c_int]
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    ctypes.windll.user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+    region = gdi32.CreateRectRgn(0, 0, 0, 0)
+    w, h = mask.size
+    px = mask.load()
+    for y in range(h):
+        x = 0
+        while x < w:
+            if px[x, y]:
+                start = x
+                while x < w and px[x, y]:
+                    x += 1
+                run = gdi32.CreateRectRgn(start, y, x, y + 1)
+                gdi32.CombineRgn(region, region, run, 2)  # RGN_OR
+                gdi32.DeleteObject(run)
+            else:
+                x += 1
+    ctypes.windll.user32.SetWindowRgn(hwnd, region, True)  # Windows takes ownership of the region
+
+
+def stack_below(window, above):
+    """Put `window` right below the window of widget `above` in the window order."""
+    user32 = ctypes.windll.user32
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    # SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+    user32.SetWindowPos(top_hwnd(window), top_hwnd(above), 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010)
+
+
+def hit_zone(master):
+    """A nearly invisible window to put behind a character, shaped like it.
+
+    A character's transparent pixels let the mouse through to the desktop;
+    without this zone the cursor would turn back into the arrow at every gap
+    in the pixel art, and clicks there would miss.
+    """
+    zone = tk.Toplevel(master)
+    zone.overrideredirect(True)
+    zone.attributes("-topmost", True)
+    zone.attributes("-alpha", 0.01)
+    zone.config(bg="black")
+    return zone
 
 
 def make_click_through(window):
@@ -185,7 +343,7 @@ class PopupMenu:
         self.width, self.height = width * s, height * s
         self.row_height = button_h * s
         self.canvas = tk.Canvas(self.window, width=self.width, height=self.height,
-                                bg=KEY_COLOR, highlightthickness=0, bd=0, cursor="hand2")
+                                bg=KEY_COLOR, highlightthickness=0, bd=0)
         self.canvas.pack()
         self.items = [self.canvas.create_image(0, top * s, image=photos["normal"], anchor="nw")
                       for top, _, photos in self.rows]

@@ -41,7 +41,7 @@ from ctypes import wintypes
 from pathlib import Path
 from tkinter import messagebox
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageChops, ImageFilter, ImageTk
 
 import dummy as training_dummy
 import ui
@@ -74,7 +74,9 @@ JUMP_MIN_HEIGHT = 40          # lowest jump, in pixels
 JUMP_DRIFT = 140              # sideways speed while in the air, towards the cursor
 JUMP_PAUSE = 0.6              # pause after landing before jumping again, in seconds
 AIR_ATTACK_FRAME_MS = 45      # the air swing plays faster than the ground one
-AIR_SLASH_LAST_FRAME = 8      # it hangs in the air until this frame of the swing
+AIR_ATTACK_FIRST_FRAME = 2    # in the air it skips the wind-up (planted feet): straight to the slash
+AIR_ATTACK_LAST_FRAME = 6     # ...and after this frame it skips the recovery and just falls
+AIR_ATTACK_GRAVITY = 0.3      # while swinging it keeps falling, but floatier (share of gravity)
 
 # Gravity, throwing and click-vs-drag settings are shared with the dummy: see physics.py.
 
@@ -251,6 +253,25 @@ def crop_box():
     return (round(center - half), y0, round(center + half), y1), body_half, ground
 
 
+def hit_shape(frames, facing):
+    """Its silhouette on screen over `frames` (facing 1: right, -1: left), cropped
+    to the body, and where that crop sits in its window.
+
+    One-pixel gaps (the jagged edges of the pixel art) are closed so the cursor
+    doesn't flicker along the outline, without making the silhouette bigger.
+    """
+    mask = None
+    for frame in frames:
+        m = solid_mask(frame)
+        mask = m if mask is None else ImageChops.lighter(mask, m)
+    mask = mask.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
+    if facing == -1:
+        mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+    mask = mask.resize((mask.width * SCALE, mask.height * SCALE), Image.NEAREST)
+    x0, y0, x1, y1 = mask.getbbox()
+    return mask.crop((x0, y0, x1, y1)), (x0, y0)
+
+
 def to_photo(frame):
     frame = frame.resize((frame.width * SCALE, frame.height * SCALE), Image.NEAREST)
     # tkinter only supports full transparency: the background is painted with the key color.
@@ -398,9 +419,20 @@ class Parton:
 
         self.label = tk.Label(self.root, bg=KEY_COLOR, bd=0)
         self.label.pack()
-        self.label.bind("<Button-3>", app.show_menu)
-        self.label.bind("<ButtonPress-1>", self.press)
-        self.label.bind("<ButtonRelease-1>", self.release)
+
+        # Hit zone behind it, shaped like its idle pose (one shape per side it
+        # faces): the mouse doesn't slip through the gaps in its pixel art.
+        idle_frames = [f.crop(box) for f in raw_frames(ANIMATIONS["idle"][0])]
+        self.hit_shapes = {facing: hit_shape(idle_frames, facing) for facing in (1, -1)}
+        self.hitbox = ui.hit_zone(master)
+        self.hitbox_facing = None             # the side its current shape faces
+        self.hitbox_shown = False
+
+        # Sword cursor over it; a closed hand while holding it.
+        for widget in (self.label, self.hitbox):
+            widget.bind("<Button-3>", app.show_menu)
+            widget.bind("<ButtonPress-1>", self.press)
+            widget.bind("<ButtonRelease-1>", self.release)
         self.pressed = None                       # (time, x, y) of a left click in progress
         self.dummy = app.dummy                    # None if the dummy's sprites are missing
         self.away = False                         # hidden by "do not disturb"
@@ -430,6 +462,7 @@ class Parton:
         self.last_hurt = self.last_heal = 0.0     # when it was last hit / last healed
         self.training = False                     # in the middle of a session on the dummy
         self.attack_target = "cursor"
+        self.set_cursor("sword")
         self.set_state("idle")
 
     # --- Menu actions ------------------------------------------------------------
@@ -443,6 +476,7 @@ class Parton:
         self.hidden = True
         self.pressed = None
         self.root.withdraw()
+        self.show_hitbox(False)
 
     def unhide(self):
         self.hidden = False
@@ -465,6 +499,8 @@ class Parton:
         if away:
             if self.state == "held":             # dropped if it was being held
                 self.state, self.vx, self.vy = "dropped", 0.0, 0.0
+                self.set_cursor("sword")
+            self.show_hitbox(False)
             self.pressed = None
             self.root.withdraw()
             self.hearts.hide()
@@ -568,9 +604,11 @@ class Parton:
             self.hops_left = CELEBRATE_HOPS
             self.vy = 0.0
         elif state == "air_attack":
+            # It keeps its jump's arc (no stopping dead in the air) and goes
+            # straight into the slash.
             self.air_swung = True
-            self.vy = 0.0                    # hang at the top while swinging
-            self.set_anim("attack1", restart=True, frame_ms=AIR_ATTACK_FRAME_MS)
+            self.set_anim("attack1", restart=True, frame_ms=AIR_ATTACK_FRAME_MS,
+                          start=AIR_ATTACK_FIRST_FRAME)
 
     def train_target(self):
         """Spot at the axe's distance from the dummy, on the side Parton is on
@@ -584,12 +622,12 @@ class Parton:
                 return target
         return min(max(cx + side * TRAIN_GAP, lo), hi)
 
-    def set_anim(self, name, restart=False, frame_ms=None):
-        """Switch animation; start from the first frame if it changes or if asked to."""
+    def set_anim(self, name, restart=False, frame_ms=None, start=0):
+        """Switch animation; start from frame `start` if it changes or if asked to."""
         if restart or self.anim != name:
             self.anim = name
             self.frame_ms = frame_ms or ANIMATIONS[name][1]
-            self.frame_index = 0
+            self.frame_index = start
             self.frame_elapsed = 0.0
 
     def tick(self):
@@ -657,8 +695,7 @@ class Parton:
         elif self.state == "jump":
             self.jump(dt)
         elif self.state == "air_attack":
-            # Hang still until the slash is over, then start falling.
-            self.fall(dt, 0.0 if self.frame_index <= AIR_SLASH_LAST_FRAME else 1.0)
+            self.air_attack(dt)
         elif self.state == "held":
             self.follow_cursor()
         elif self.state == "dropped":
@@ -840,6 +877,18 @@ class Parton:
         if self.state == "jump":
             self.set_anim("jump" if self.vy > 0 else "fall")
 
+    def air_attack(self, dt):
+        """Swinging in mid-air: it drifts down slowly while it slashes, then
+        falls normally (or lands, if it reached the ground first)."""
+        self.fall(dt, AIR_ATTACK_GRAVITY)
+        if self.frame_index > AIR_ATTACK_LAST_FRAME or self.y == 0:
+            self.celebrate_pending = False
+            if self.y > 0:
+                self.state = "jump"
+                self.set_anim("fall")
+            else:
+                self.set_state("idle", idle_seconds=ATTACK_PAUSE)
+
     def fall(self, dt, gravity_factor):
         """Apply gravity; on landing, rest briefly (or finish the swing on the ground)."""
         self.vy -= GRAVITY * gravity_factor * dt
@@ -891,6 +940,8 @@ class Parton:
         self.training = False
         self.state = "dead" if self.hits >= HITS_TO_DIE else "hurt"
         self.alive = self.state != "dead"
+        if not self.alive:
+            self.set_cursor(None)            # nothing left to hit
         self.closing = False
         self.set_anim("death" if self.state == "dead" else "hurt", restart=True)
 
@@ -909,10 +960,12 @@ class Parton:
         self.cursor_trail = CursorTrail()
         self.impact_done = False             # this throw may hit the dummy
         self.set_anim("fall")
+        self.set_cursor("fist")
 
     def drop(self):
         """Let go: it flies off with the cursor's speed and direction, then falls."""
         self.state = "dropped"
+        self.set_cursor("sword")
         self.vx, self.vy = throw_velocity(*self.cursor_trail.speed())
         if abs(self.vx) > 50:
             self.facing = 1 if self.vx > 0 else -1
@@ -1202,9 +1255,40 @@ class Parton:
         # below them is transparent.
         y = bottom - self.ground - round(self.y)
         self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
+        self.place_hitbox(x, y)
+
+    def place_hitbox(self, x, y):
+        """Keep the hit zone under its body, facing its way; only while it is alive
+        on the screen (its dead body can't be hit)."""
+        self.show_hitbox(self.alive and not self.hidden and not self.gone and not self.away)
+        if not self.hitbox_shown:
+            return
+        shape, (ox, oy) = self.hit_shapes[self.facing]
+        if self.facing != self.hitbox_facing:
+            ui.shape_window(ui.top_hwnd(self.hitbox), shape)
+            self.hitbox_facing = self.facing
+        self.hitbox.geometry(f"{shape.width}x{shape.height}+{x + ox}+{y + oy}")
+
+    def show_hitbox(self, show):
+        if show == self.hitbox_shown:
+            return
+        self.hitbox_shown = show
+        if show:
+            self.hitbox.deiconify()
+            ui.stack_below(self.hitbox, self.label)
+        else:
+            self.hitbox.withdraw()
+
+    def set_cursor(self, name):
+        """The cursor over it: "sword", "fist", or None for the normal arrow."""
+        for widget in (self.label, self.hitbox):
+            widget.config(cursor=ui.cursor(name) if name else "")
 
     def keep_on_top(self):
         self.root.attributes("-topmost", True)
+        if self.hitbox_shown:
+            self.hitbox.attributes("-topmost", True)
+            ui.stack_below(self.hitbox, self.label)
         self.root.after(5_000, self.keep_on_top)
 
 
