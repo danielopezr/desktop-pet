@@ -4,6 +4,11 @@ A small desktop pet for Windows, written in Python with Tkinter. Parton is the
 "Little Axion" character from the *Luneblade* pack by Jesshiyoo. It lives on
 your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
 
+![Parton chasing the cursor, the dummy being hit and thrown, Parton dodging it and getting hit back](docs/demo.gif)
+
+*Recorded from the program itself, with a simulated cursor. Art by Jesshiyoo
+(Parton) and Mattz Art (the dummy).*
+
 ## What it does
 
 - **Wanders** along the bottom of the screen, standing on the taskbar: it
@@ -217,8 +222,6 @@ it lasts, how far it floats up and when it starts fading.
 
 - Parton art by [Jesshiyoo](https://jesshiyoo.itch.io/).
 - Dummy art by [Mattz Art](https://xzany.itch.io/).
-- The menu, hearts and cursors use the colors of the Fantasy UI Kit Lite by
-  [Willosuna](https://willosuna.itch.io/).
 - Nanofon pixel font.
 
 ## License

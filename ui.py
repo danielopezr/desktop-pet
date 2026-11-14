@@ -1,8 +1,7 @@
 """Interface shared by Parton and the dummy: the right-click menu and the
 hearts that show up when the cursor is over a character.
 
-Both are tiny pixel drawings made here, at the characters' pixel size, in the
-colors of the ruby buttons from Willosuna's "Fantasy UI Kit Lite". The menu's
+Both are tiny pixel drawings made here, at the characters' pixel size. The menu's
 text uses the "Nanofon" pixel font in assets/ui (not included in the
 repository, see README.md), at half that pixel size so the buttons stay
 small. Without the font, the menu is the plain Windows one.
