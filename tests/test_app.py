@@ -199,6 +199,34 @@ class Sleeping(AppCase):
         self.assertIn("chase", states)
         self.assertEqual(self.alert.call_count, 1)     # no second "!" for the chase
 
+    def creep(self, to_x, y, speed=120):
+        """Move the cursor slowly across to `to_x`, at screen height `y`."""
+        x, last = float(self.cursor[0]), time.perf_counter()
+        direction = 1 if to_x > x else -1
+        while (to_x - x) * direction > 0:
+            now = time.perf_counter()
+            x, last = x + direction * speed * (now - last), now
+            self.cursor[:] = [int(x), int(y)]
+            self.app.root.update()
+            time.sleep(0.005)
+
+    def test_a_cursor_creeping_up_wakes_it_only_when_it_touches_it(self):
+        self.fall_asleep()
+        y = self.bottom - self.p.body_height / 2
+        self.cursor[:] = [int(self.p.x + 900), int(y)]   # out of sight, level with its body
+        self.pump(0.2)
+        self.creep(self.p.x + 700, y, speed=2000)        # (a quick start, far away, to save time)
+        self.pump(0.2)
+        self.assertTrue(self.p.asleep())
+        self.cursor[0] = int(self.p.x + self.p.body_half + 150)   # in sight... (a jump the test
+        self.p.mouse_trail.points.clear()                         # makes: not a fast move)
+        self.creep(self.p.x + self.p.body_half + 20, y)  # ...and creeping closer: it sleeps on
+        self.assertTrue(self.p.asleep())
+        self.assertEqual(self.alert.call_count, 0)
+        self.creep(self.p.x, y)                          # onto its body: it wakes up
+        self.assertFalse(self.p.asleep())
+        self.assertEqual(self.alert.call_count, 1)
+
     def test_the_mouse_moving_far_away_does_not_wake_it(self):
         self.fall_asleep()
         self.cursor[:] = [int(self.p.x + 900), int(self.bottom - 700)]
@@ -452,6 +480,41 @@ class Impacts(AppCase):
         bx0, by0, _, _ = (v / dummy.SCALE for v in self.d.body)
         self.assertGreaterEqual(x, round(bx0))
         self.assertGreaterEqual(y, round(by0))
+
+    def test_only_the_latest_hit_animations_are_kept(self):
+        wx, wy = self.d.window_pos()
+        bx0, by0, _, _ = self.d.body
+        with mock.patch.object(dummy, "HIT_CACHE_SIZE", 3):
+            for i in range(6):
+                self.d.hit_frames_at((wx + bx0 + 8 + i * dummy.SCALE, wy + by0 + 40))
+            first = next(iter(self.d.hit_cache))
+            self.d.hit_frames_at((wx + bx0 + 8 + 3 * dummy.SCALE, wy + by0 + 40))   # used again: kept
+            self.d.hit_frames_at((wx + bx0 + 8 + 9 * dummy.SCALE, wy + by0 + 40))
+        self.assertEqual(len(self.d.hit_cache), 3)
+        self.assertIn(first, self.d.hit_cache)
+
+    def test_a_slash_still_lands_when_a_late_update_skips_its_frame(self):
+        self.park_parton()
+        self.p.x = self.p.train_target()
+        self.p.face_dummy()
+        self.p.set_state("attack", target="dummy")
+        self.p.swings_left = 1
+        self.p.set_anim("attack1", restart=True)
+        slash = parton.SLASH_FRAMES["attack1"][0]
+        self.p.frame_index = slash + 1                   # it went from before the slash to after it
+        self.p.check_slash("attack1", slash - 1)
+        self.assertEqual(self.d.hits, 1)
+        self.p.check_slash("attack1", slash + 1)         # the same frame again: no second hit
+        self.assertEqual(self.d.hits, 1)
+
+    def test_nothing_is_left_floating_when_parton_is_hidden(self):
+        self.park_parton()
+        self.p.alert.show(self.p.head_top)
+        self.pump(0.1)
+        self.assertEqual(self.p.alert.window.state(), "normal")
+        self.p.hide()
+        self.pump(0.1)
+        self.assertEqual(self.p.alert.window.state(), "withdrawn")
 
     def test_parton_strikes_the_side_facing_him(self):
         from_left = self.d.surface_point(self.bottom - 40, from_left=True)

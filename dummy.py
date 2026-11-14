@@ -10,16 +10,16 @@
   RESPAWN_SECONDS, or right away with "Revive dummy" in the menu.
 - Right click: the shared menu (see App in parton.py).
 """
-import ctypes
 import time
 import tkinter as tk
-from ctypes import wintypes
+from collections import OrderedDict
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageFilter, ImageTk
+from PIL import Image, ImageChops, ImageFilter
 
 import ui
 from physics import CursorTrail, fly_step, is_drag, throw_velocity
+from screen import KEY_COLOR, mouse_pos, solid_mask, to_photo, work_area
 
 # --- Settings ------------------------------------------------------------------
 SCALE = 4                 # 80x48 px frames; same pixel size as Parton
@@ -32,7 +32,7 @@ RESPAWN_SECONDS = 15      # after breaking, it comes back on its own after this 
 MARGIN = 8                # distance from the screen edge where it starts
 WEIGHT = 2.0              # twice as heavy as Parton: thrown half as fast
 TICK_MS = 16              # update rate while held or flying (~60 fps)
-KEY_COLOR = "#ff00fe"     # color that becomes transparent
+HIT_CACHE_SIZE = 30       # hit animations kept ready (one per spot hit): the oldest are dropped
 IMPACT_COLOR = (255, 200, 37)  # the yellow sparks in HIT.png: moved to where each hit lands
 
 SPRITES = Path(__file__).parent / "assets" / "dummy" / "sprites"
@@ -44,27 +44,10 @@ def available():
     return all((SPRITES / f"{name}.png").exists() for name in SHEETS)
 
 
-def work_area():
-    """Windows work area (screen minus the taskbar), in physical pixels."""
-    rect = wintypes.RECT()
-    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)  # SPI_GETWORKAREA
-    return rect.left, rect.top, rect.right, rect.bottom
-
-
-def mouse_pos():
-    pt = wintypes.POINT()
-    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-    return pt.x, pt.y
-
-
 def raw_frames(name):
     sheet = Image.open(SPRITES / f"{name}.png").convert("RGBA")
     return [sheet.crop((i * FRAME_W, 0, (i + 1) * FRAME_W, FRAME_H))
             for i in range(sheet.width // FRAME_W)]
-
-
-def solid_mask(frame):
-    return frame.getchannel("A").point(lambda a: 255 if a >= 128 else 0)
 
 
 def content_box(names):
@@ -103,16 +86,7 @@ def body_mask(names, box, body):
 
 
 def load_frames(name, box):
-    return [to_photo(frame.crop(box)) for frame in raw_frames(name)]
-
-
-def to_photo(frame):
-    frame = frame.resize((frame.width * SCALE, frame.height * SCALE), Image.NEAREST)
-    # tkinter only supports full transparency: semi-transparent pixels become
-    # opaque or invisible, and the background is painted with the key color.
-    bg = Image.new("RGBA", frame.size, KEY_COLOR)
-    bg.paste(frame, mask=solid_mask(frame))
-    return ImageTk.PhotoImage(bg.convert("RGB"))
+    return [to_photo(frame.crop(box), SCALE) for frame in raw_frames(name)]
 
 
 def split_impact(frames):
@@ -153,11 +127,11 @@ class TrainingDummy:
         self.hit = load_frames("HIT", box)
         # The hit without its sparks, and the sparks alone, to put them where it is hit.
         self.hit_bodies, self.hit_sparks = split_impact([f.crop(box) for f in raw_frames("HIT")])
-        self.hit_plain = [to_photo(f) for f in self.hit_bodies]
+        self.hit_plain = [to_photo(f, SCALE) for f in self.hit_bodies]
         first = next(s for s in self.hit_sparks if s.getbbox())
         x0, y0, x1, y1 = first.getbbox()
         self.spark_origin = ((x0 + x1) / 2, (y0 + y1) / 2)   # where the sparks burst from
-        self.hit_cache = {}                     # (x, y, mirrored) -> frames
+        self.hit_cache = OrderedDict()          # (x, y, mirrored) -> frames, the latest used last
         self.breaking = load_frames("BREAKING", box)
 
         self.hitbox = ui.hit_zone(master)       # behind its body, shaped like it
@@ -187,6 +161,7 @@ class TrainingDummy:
         ui.shape_window(ui.top_hwnd(self.hitbox), self.body_shape)  # hits only on the silhouette
         self.show_frame(self.idle[0])
         self.keep_on_top()
+        self.last = time.perf_counter()
         self.tick()
 
     def reset_position(self):
@@ -326,6 +301,18 @@ class TrainingDummy:
         return left - self.body[0], right - self.body[2], bottom - top - self.height
 
     def tick(self):
+        # Whatever goes wrong in one update, the next one still comes: it
+        # mustn't freeze for good.
+        try:
+            self.update()
+        finally:
+            self.master.after(TICK_MS, self.tick)
+
+    def update(self):
+        # Real time between updates (like Parton, who foresees its flight to
+        # dodge it): a late update mustn't slow its flight down.
+        now = time.perf_counter()
+        dt, self.last = min(now - self.last, 0.1), now
         if not self.hidden and not self.gone and not self.away:
             if self.pressed and self.state != "held":
                 if is_drag(self.pressed, mouse_pos(), self.window_pos(),
@@ -343,12 +330,11 @@ class TrainingDummy:
             elif self.state == "flying":
                 lo, hi, ceiling = self.bounds()
                 self.x, self.vx, self.y, self.vy = fly_step(
-                    self.x, self.vx, self.y, self.vy, TICK_MS / 1000, lo, hi, ceiling, WEIGHT)
+                    self.x, self.vx, self.y, self.vy, dt, lo, hi, ceiling, WEIGHT)
                 if self.y == 0:                     # landed
                     self.state, self.vx = "rest", 0.0
                 self.place()
         self.update_hearts()
-        self.master.after(TICK_MS, self.tick)
 
     def update_hearts(self):
         """Show its health above its head while the cursor is over its body."""
@@ -467,8 +453,11 @@ class TrainingDummy:
                 moved.paste(sparks, (round(x - ox), round(y - oy)), sparks)
                 frame = body.copy()
                 frame.alpha_composite(moved)
-                frames.append(to_photo(frame))
+                frames.append(to_photo(frame, SCALE))
             self.hit_cache[key] = frames
+            while len(self.hit_cache) > HIT_CACHE_SIZE:   # each one is close to a megabyte
+                self.hit_cache.popitem(last=False)
+        self.hit_cache.move_to_end(key)
         return self.hit_cache[key]
 
     def swing_back(self):

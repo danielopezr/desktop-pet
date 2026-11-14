@@ -15,13 +15,14 @@ import tkinter as tk
 from ctypes import wintypes
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageDraw, ImageFont
+
+from screen import KEY_COLOR, mouse_pos, to_photo, work_area
 
 # --- Settings ------------------------------------------------------------------
 UI_SCALE = 4              # same pixel size as the characters (their SCALE)
 TEXT_SCALE = 2            # the menu's text is drawn at this pixel size: half, to keep it small
 FONT_SIZE = 8             # Nanofon is an 8 px pixel font: smaller sizes break its letters
-KEY_COLOR = "#ff00fe"     # color that becomes transparent
 TEXT_COLOR = (255, 244, 224, 255)
 RED = (184, 50, 58, 255)          # button, and a full heart
 LIGHT_RED = (232, 112, 122, 255)  # button under the cursor
@@ -77,18 +78,6 @@ def any_mouse_button_down():
     """True while the left, right or middle mouse button is held down, anywhere."""
     state = ctypes.windll.user32.GetAsyncKeyState
     return any(state(vk) & 0x8000 for vk in (0x01, 0x02, 0x04))
-
-
-def mouse_pos():
-    pt = wintypes.POINT()
-    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-    return pt.x, pt.y
-
-
-def work_area():
-    rect = wintypes.RECT()
-    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)  # SPI_GETWORKAREA
-    return rect.left, rect.top, rect.right, rect.bottom
 
 
 # --- Cursors ---------------------------------------------------------------------
@@ -260,18 +249,6 @@ def make_click_through(window):
     user32.SetWindowLongW(hwnd, -20, style | 0x80000 | 0x20 | 0x80 | 0x08000000)
 
 
-def to_photo(image, scale=UI_SCALE):
-    """Scale a drawing up (to the characters' pixel size) and turn it into a PhotoImage.
-
-    tkinter only supports full transparency: pixels at least half opaque are
-    drawn solid, the rest become the key color.
-    """
-    image = image.resize((image.width * scale, image.height * scale), Image.NEAREST)
-    bg = Image.new("RGBA", image.size, KEY_COLOR)
-    bg.paste(image, mask=image.getchannel("A").point(lambda a: 255 if a >= 128 else 0))
-    return ImageTk.PhotoImage(bg.convert("RGB"))
-
-
 # --- Text ----------------------------------------------------------------------
 _font = None
 
@@ -352,7 +329,7 @@ class PopupMenu:
                 y_px += self.SEP_GAP
                 continue
             label = next(label_iter)
-            photos = {state: to_photo(self.button(state, button_w, button_h, label), scale=1)
+            photos = {state: to_photo(self.button(state, button_w, button_h, label), 1)
                       for state in ("normal", "hover", "pressed")}
             self.rows.append((y_px, item[1], photos))
             y_px += button_h + self.ROW_GAP
@@ -465,7 +442,7 @@ class PopupMenu:
             self.window.destroy()
 
 
-# --- Hearts ----------------------------------------------------------------------------
+# --- Emotes and hearts -------------------------------------------------------------------
 class Emote:
     """A little drawing (like QUESTION) that pops over a character's head,
     floats up and fades away. It follows the character while it lasts and
@@ -486,7 +463,7 @@ class Emote:
             for x, cell in enumerate(row):
                 if cell == "#":
                     image.putpixel((x, y), color)
-        self.photo = to_photo(image)
+        self.photo = to_photo(image, UI_SCALE)
         tk.Label(self.window, image=self.photo, bg=KEY_COLOR, bd=0).pack()
         self.window.withdraw()
         make_click_through(self.window)
@@ -520,6 +497,13 @@ class Emote:
         appear = min(1.0, t / self.fade_in) if self.fade_in else 1.0
         self.window.attributes("-alpha", appear * (1.0 - fade))
         self.job = self.window.after(16, self.step)
+
+    def hide(self):
+        """Gone at once (its character has left the screen)."""
+        if self.job:
+            self.window.after_cancel(self.job)
+            self.job = None
+        self.window.withdraw()
 
 
 def head_center(mask, rows=HEAD_ROWS):
@@ -563,7 +547,7 @@ class Hearts:
 
     def image(self, hp, maximum):
         if (hp, maximum) not in self.photos:
-            self.photos[hp, maximum] = to_photo(self.draw(hp, maximum))
+            self.photos[hp, maximum] = to_photo(self.draw(hp, maximum), UI_SCALE)
         return self.photos[hp, maximum]
 
     @staticmethod

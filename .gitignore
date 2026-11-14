@@ -2,6 +2,6 @@
 __pycache__/
 *.pyc
 
-# Third-party art (Parton, dummy and cursor packs): their licenses do not
+# Third-party art and font (Parton, the dummy, the menu's font): their licenses do not
 # allow redistributing them (see README.md)
 assets/

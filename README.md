@@ -15,7 +15,7 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
   idles for a few seconds, then runs to a random spot.
 - **Trains** on the training dummy: now and then, when the dummy is close
   enough, Parton walks up to it and hits it a few times. Once in a while the
-  dummy **hits back**: it swings on its post, takes one of Parton's hearts
+  dummy **hits back**: it swings on its post, takes half a heart from Parton
   and knocks him back, and a puzzled **"?"** floats up from his head.
 - **Chases the cursor** when it sees it nearby (up to 450 px to either side
   and 250 px above the taskbar): a **"!"** pops over its head as it spots
@@ -43,7 +43,9 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
   stands, eyes closed, with "Z"s floating up from its head one after another,
   drifting the way it faces. Bring the cursor near (down on the taskbar next
   to it counts too) and it
-  wakes up with a "!"; hitting it or picking it up also wakes it. In calm
+  wakes up with a "!"; hitting it or picking it up also wakes it. Move the
+  cursor **slowly** and you can sneak up on it: it sleeps on until the cursor
+  touches it. In calm
   mode the cursor never wakes it: only a hit, picking it up or "Wake Parton"
   in the menu do. However it wakes up, a "!" pops over its head; woken by a
   hit, it also hops aside, startled, keeping its eyes on the cursor. In calm
@@ -130,7 +132,7 @@ runs at a time.
 
 - Windows 10 or 11
 - Python 3.10 or newer, with Tkinter (included in the python.org installer)
-- [Pillow](https://pypi.org/project/pillow/): `pip install pillow`
+- [Pillow](https://pypi.org/project/pillow/): `pip install -r requirements.txt`
 
 ## Sprites (not included)
 
@@ -188,7 +190,7 @@ window; `python parton.py` also works.
 python -m unittest
 ```
 
-It runs every test in `tests/` (about 45 seconds), with nothing to install:
+It runs every test in `tests/` (about a minute and a half), with nothing to install:
 
 - `test_physics.py`: throwing, falling, bouncing and the click-or-drag rule.
 - `test_settings.py`: saving and loading the settings.
@@ -237,6 +239,7 @@ The constants at the top of `parton.py` control its behavior:
 | `FLEE_AT`, `FLEE_DASH_DISTANCE` | With how many hits left it runs away, and how close the cursor must be for it to dash |
 | `FLEE_JUMP_HEIGHT`, `FLEE_JUMPS_PER_SECOND` | Height of its dodging hops while fleeing, and how often it hops (cursor far / close) |
 | `SLEEP_AFTER`, `WAKE_PAUSE` | How long the mouse must be still for it to doze off, and how long it takes to come round |
+| `SNEAK_SPEED` | How slowly the cursor must move to sneak up on it asleep (it then wakes only when touched) |
 | `STARTLE_PUSH`, `STARTLE_LIFT` | How far aside and how high it hops when a hit wakes it up |
 | `NUDGE_SECONDS`, `SHUFFLE_DISTANCE`, `SHUFFLE_SPEED` | Calm mode: how long the cursor must rub it asleep before it gets up, and how far and how fast it walks off |
 | `GROGGY_LOOKS`, `GROGGY_LOOK_SECONDS` | How many times it looks around, dazed, before walking off, and how long each look lasts |
@@ -264,7 +267,7 @@ The constants at the top of `parton.py` control its behavior:
 | `DRAG_THRESHOLD`, `AIR_DRAG_THRESHOLD`, `HOLD_SECONDS` | How far you must move (on the ground / in the air), or how long you must hold, for a click to become a grab |
 
 The dummy has its own settings at the top of `dummy.py` (`SCALE`,
-`HITS_TO_DIE`, `RESPAWN_SECONDS`, `WEIGHT`, animation speeds and its starting distance from the
+`HITS_TO_DIE`, `RESPAWN_SECONDS`, `WEIGHT`, `HIT_CACHE_SIZE`, animation speeds and its starting distance from the
 screen edge).
 
 `ui.py` draws the menu and the hearts: `UI_SCALE` sets their pixel size
@@ -274,6 +277,9 @@ the hearts sit and `HEART_GAP` the space between hearts. `EXCLAMATION`,
 `QUESTION` and `SLEEP_Z` are the "!", "?" and "Z" drawings, and `EMOTE_SECONDS`, `EMOTE_RISE`
 and `EMOTE_FADE_FROM` how long they last, how far they float up and when they
 start fading.
+
+`screen.py` holds what all of them share to draw on the screen (the
+transparent color, where the cursor and the taskbar are).
 
 ## Credits
 

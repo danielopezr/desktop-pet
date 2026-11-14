@@ -22,7 +22,8 @@ together with a training dummy (dummy.py), both in this one program.
 - If the mouse hasn't moved or clicked for a minute (and nothing has hit it),
   it dozes off where it stands, with "Z"s floating up; bringing the cursor
   near (the taskbar under it counts) wakes it up ("!"), and so does hitting
-  it or picking it up. In calm mode the cursor never wakes it: only a hit,
+  it or picking it up. A cursor that creeps up slowly doesn't wake it until
+  it touches it. In calm mode the cursor never wakes it: only a hit,
   picking it up or "Wake Parton" in the menu do. However it wakes up, a "!"
   pops over its head; woken by a hit, it also hops aside, startled,
   keeping its eyes on the cursor. In calm mode, a cursor that keeps rubbing
@@ -52,10 +53,11 @@ from ctypes import wintypes
 from pathlib import Path
 from tkinter import messagebox
 
-from PIL import Image, ImageChops, ImageFilter, ImageTk
+from PIL import Image, ImageChops, ImageFilter
 
 import dummy as training_dummy
 import ui
+from screen import KEY_COLOR, mouse_pos, solid_mask, to_photo, work_area
 from physics import (FALL_DAMAGE_SPEED, GRAVITY, IMPACT_BOUNCE, IMPACT_SPEED, CursorTrail,
                      fly_step, is_drag, throw_velocity)
 
@@ -67,7 +69,6 @@ CHASE_SPEED = 260             # pixels per second while chasing the cursor
 IDLE_SECONDS = (2.0, 7.0)     # how long it stays idle (min, max)
 MIN_RUN_DISTANCE = 150        # minimum length of each wander run, in pixels
 TICK_MS = 16                  # update rate (~60 fps)
-KEY_COLOR = "#ff00fe"         # color that becomes transparent
 
 # Vision and attack (screen pixels, measured from the character's body)
 VISION_RANGE = 450            # horizontal distance at which it sees the cursor
@@ -110,6 +111,7 @@ Z_SECONDS = 1.8               # ...and each lasts this long, so two are rising a
 Z_RISE = 64                   # how far each "Z" floats up, in pixels (leaves a gap between two)
 Z_DRIFT = 22                  # and how far sideways, towards where it faces (a diagonal)
 WAKE_PAUSE = 0.35             # after waking up it stands still this long before reacting
+SNEAK_SPEED = 350             # a cursor slower than this (pixels per second) sneaks up on it: only touching it wakes it
 STARTLE_PUSH = 300            # woken by a hit it hops aside, away from the cursor (sideways speed)...
 STARTLE_LIFT = 720            # ...this high (upward speed: about a 100 px hop), facing the cursor
 NUDGE_SECONDS = 2.0           # calm mode: this long of the cursor moving over it, asleep, bothers it...
@@ -179,19 +181,6 @@ FRAME_PICKS = {"doze": (3, 4, 5, 6), "sleep": (6, 7)}   # frames of the file eac
 USED = tuple(ANIMATIONS)
 
 
-def work_area():
-    """Windows work area (screen minus the taskbar), in physical pixels."""
-    rect = wintypes.RECT()
-    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)  # SPI_GETWORKAREA
-    return rect.left, rect.top, rect.right, rect.bottom
-
-
-def mouse_pos():
-    pt = wintypes.POINT()
-    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-    return pt.x, pt.y
-
-
 def load_settings():
     """The saved settings, with the defaults for anything missing or unreadable."""
     settings = dict(DEFAULT_SETTINGS)
@@ -224,6 +213,10 @@ def fullscreen_app_open():
     user32.MonitorFromWindow.restype = wintypes.HMONITOR
     user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
     user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.IsZoomed.argtypes = [wintypes.HWND]
     hwnd = user32.GetForegroundWindow()
     if not hwnd:
         return False
@@ -240,6 +233,11 @@ def fullscreen_app_open():
     info = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
     user32.GetMonitorInfoW(user32.MonitorFromWindow(hwnd, 2), ctypes.byref(info))  # nearest
     m = info.rcMonitor
+    # A maximized window covers the whole screen too when the taskbar hides
+    # itself, but its frame sticks out past the screen's edges; a real
+    # full-screen window ends right on them.
+    if user32.IsZoomed(hwnd) and rect.left < m.left and rect.top < m.top:
+        return False
     on_main_screen = info.dwFlags & 1                 # MONITORINFOF_PRIMARY: where they live
     return bool(on_main_screen and rect.left <= m.left and rect.top <= m.top
                 and rect.right >= m.right and rect.bottom >= m.bottom)
@@ -247,10 +245,6 @@ def fullscreen_app_open():
 
 def missing_sprites():
     return [file for file, _, _ in ANIMATIONS.values() if not (SPRITES / file).exists()]
-
-
-def solid_mask(frame):
-    return frame.getchannel("A").point(lambda a: 255 if a >= 128 else 0)
 
 
 def raw_frames(file):
@@ -360,14 +354,6 @@ def hit_shape(frames, facing):
     mask = mask.resize((mask.width * SCALE, mask.height * SCALE), Image.NEAREST)
     x0, y0, x1, y1 = mask.getbbox()
     return mask.crop((x0, y0, x1, y1)), (x0, y0)
-
-
-def to_photo(frame):
-    frame = frame.resize((frame.width * SCALE, frame.height * SCALE), Image.NEAREST)
-    # tkinter only supports full transparency: the background is painted with the key color.
-    bg = Image.new("RGBA", frame.size, KEY_COLOR)
-    bg.paste(frame, mask=solid_mask(frame))
-    return ImageTk.PhotoImage(bg.convert("RGB"))
 
 
 class App:
@@ -519,8 +505,8 @@ class Parton:
         for name in USED:
             raw = animation_frames(name, box)
             self.frames[name] = {
-                1: [to_photo(f) for f in raw],
-                -1: [to_photo(f.transpose(Image.FLIP_LEFT_RIGHT)) for f in raw],
+                1: [to_photo(f, SCALE) for f in raw],
+                -1: [to_photo(f.transpose(Image.FLIP_LEFT_RIGHT), SCALE) for f in raw],
             }
 
         self.label = tk.Label(self.root, bg=KEY_COLOR, bd=0)
@@ -555,6 +541,7 @@ class Parton:
         self.next_emote = 0.0                     # when the next "Z" is due
         self.last_mouse = None                    # where the mouse was, and when it last moved
         self.last_mouse_move = time.perf_counter()
+        self.mouse_trail = CursorTrail()          # how fast the mouse is moving (sneaking up on it asleep)
         self.slept_at = 0.0
         self.wake_guard = False                   # put to sleep from the menu: see sleeping()
         self.nudged = 0.0                         # calm mode: how long the cursor has bothered it asleep
@@ -595,6 +582,12 @@ class Parton:
         self.pressed = None
         self.root.withdraw()
         self.show_hitbox(False)
+        self.hide_emotes()
+
+    def hide_emotes(self):
+        """Off the screen, nothing is left floating where its head was."""
+        for emote in (self.alert, self.question, *self.zzz):
+            emote.hide()
 
     def unhide(self):
         self.hidden = False
@@ -622,6 +615,7 @@ class Parton:
             self.pressed = None
             self.root.withdraw()
             self.hearts.hide()
+            self.hide_emotes()
         elif not self.hidden and not self.gone:
             self.root.deiconify()
 
@@ -631,6 +625,7 @@ class Parton:
             return
         self.gone = True
         self.root.withdraw()
+        self.hide_emotes()
         self.app.check_empty()
 
     # --- Helpers ---------------------------------------------------------------
@@ -711,11 +706,7 @@ class Parton:
         if state == "idle":
             self.idle_left = idle_seconds if idle_seconds is not None else random.uniform(*IDLE_SECONDS)
         elif state == "run":
-            lo, hi = self.bounds()
-            options = [x for x in (random.uniform(lo, hi) for _ in range(20))
-                       if abs(x - self.x) >= MIN_RUN_DISTANCE]
-            self.target = options[0] if options else (lo if self.x > (lo + hi) / 2 else hi)
-            self.facing = 1 if self.target > self.x else -1
+            self.start_run()
         elif state in ("chase", "flee"):
             self.set_anim("run")
         elif state == "attack":
@@ -728,23 +719,12 @@ class Parton:
         elif state == "dodge":
             self.set_anim("dash", restart=True)
         elif state == "jump":
-            # Jump just high enough for the middle of the slash to reach the cursor.
-            seen = self.sees_mouse(LOSE_RANGE)
-            wanted = seen[1] - SLASH_CENTER if seen else JUMP_MAX_HEIGHT
-            rise = min(max(wanted, JUMP_MIN_HEIGHT), JUMP_MAX_HEIGHT)
-            self.vy = (2 * GRAVITY * rise) ** 0.5
-            self.air_swung = False           # one air swing per jump
-            self.set_anim("jump", restart=True)
+            self.start_jump()
         elif state == "celebrate":
             self.hops_left = CELEBRATE_HOPS
             self.vy = 0.0
         elif state == "doze":
-            self.on_cursor = False
-            self.wake_guard = False
-            self.nudged = 0.0
-            self.slept_at = time.perf_counter()
-            self.next_emote = self.slept_at + 0.8
-            self.set_anim("doze", restart=True)
+            self.start_doze()
         elif state == "sleep":
             self.set_anim("sleep", restart=True)
         elif state == "groggy":
@@ -752,22 +732,50 @@ class Parton:
             self.look_left = GROGGY_LOOK_SECONDS
             self.set_anim("idle", restart=True)
         elif state == "shuffle":
-            # Away from the cursor (the other way if it is against the edge).
-            mx, _ = mouse_pos()
-            away = -1 if mx > self.x else 1
-            lo, hi = self.bounds()
-            if abs(min(max(self.x + away * SHUFFLE_DISTANCE, lo), hi) - self.x) < SHUFFLE_DISTANCE / 2:
-                away = -away
-            self.turn(away)                      # turns where it stands...
-            self.target = min(max(self.x + away * SHUFFLE_DISTANCE, lo), hi)   # ...and walks off
-            self.set_anim("run", restart=True, frame_ms=SHUFFLE_FRAME_MS)
-
+            self.start_shuffle()
         elif state == "air_attack":
             # It keeps its jump's arc (no stopping dead in the air) and goes
             # straight into the slash.
             self.air_swung = True
             self.set_anim("attack1", restart=True, frame_ms=AIR_ATTACK_FRAME_MS,
                           start=AIR_ATTACK_FIRST_FRAME)
+
+    def start_run(self):
+        """Wander: pick a spot far enough along the taskbar and face it."""
+        lo, hi = self.bounds()
+        options = [x for x in (random.uniform(lo, hi) for _ in range(20))
+                   if abs(x - self.x) >= MIN_RUN_DISTANCE]
+        self.target = options[0] if options else (lo if self.x > (lo + hi) / 2 else hi)
+        self.facing = 1 if self.target > self.x else -1
+
+    def start_jump(self):
+        # Jump just high enough for the middle of the slash to reach the cursor.
+        seen = self.sees_mouse(LOSE_RANGE)
+        wanted = seen[1] - SLASH_CENTER if seen else JUMP_MAX_HEIGHT
+        rise = min(max(wanted, JUMP_MIN_HEIGHT), JUMP_MAX_HEIGHT)
+        self.vy = (2 * GRAVITY * rise) ** 0.5
+        self.air_swung = False           # one air swing per jump
+        self.set_anim("jump", restart=True)
+
+    def start_doze(self):
+        """Slump where it stands; the first "Z" comes a moment later."""
+        self.on_cursor = False
+        self.wake_guard = False
+        self.nudged = 0.0
+        self.slept_at = time.perf_counter()
+        self.next_emote = self.slept_at + 0.8
+        self.set_anim("doze", restart=True)
+
+    def start_shuffle(self):
+        # Away from the cursor (the other way if it is against the edge).
+        mx, _ = mouse_pos()
+        away = -1 if mx > self.x else 1
+        lo, hi = self.bounds()
+        if abs(min(max(self.x + away * SHUFFLE_DISTANCE, lo), hi) - self.x) < SHUFFLE_DISTANCE / 2:
+            away = -away
+        self.turn(away)                      # turns where it stands...
+        self.target = min(max(self.x + away * SHUFFLE_DISTANCE, lo), hi)   # ...and walks off
+        self.set_anim("run", restart=True, frame_ms=SHUFFLE_FRAME_MS)
 
     def train_target(self):
         """Spot at the axe's distance from the dummy, on the side Parton is on
@@ -790,11 +798,18 @@ class Parton:
             self.frame_elapsed = 0.0
 
     def tick(self):
+        # Whatever goes wrong in one update, the next one still comes: it
+        # mustn't freeze for good.
+        try:
+            self.update()
+        finally:
+            self.root.after(TICK_MS, self.tick)
+
+    def update(self):
         now = time.perf_counter()
         dt, self.last = min(now - self.last, 0.1), now
         if self.hidden or self.gone or self.away:   # off the screen: nothing to do
             self.hearts.hide()
-            self.root.after(TICK_MS, self.tick)
             return
         self.heal(now)
         self.track_mouse(now)
@@ -809,25 +824,23 @@ class Parton:
             if self.sees_mouse(VISION_RANGE) is not None:
                 self.set_state(self.reaction())
 
+        self.act(now, dt)
+        if self.pressed and self.state != "held":
+            self.check_drag_start()
+
+        before = (self.anim, self.frame_index)
+        finished = self.animate(dt)
+        self.check_slash(*before)
+        self.check_impacts(dt)
+        if finished:
+            self.animation_finished()
+        self.place()
+        self.update_hearts()
+
+    def act(self, now, dt):
+        """What it does this update, by the state it is in."""
         if self.state == "idle":
-            self.idle_left -= dt
-            if self.idle_left <= 0:
-                # After a short pause, go back to the cursor if it is still in
-                # sight, carry on training, or stay idle for a normal while.
-                # After a normal idle: sometimes train on the dummy, else wander.
-                if not self.pausing:
-                    if self.dummy_in_range() and random.random() < TRAIN_CHANCE:
-                        self.set_state("train")
-                    else:
-                        self.set_state("run")
-                elif self.sees_mouse(VISION_RANGE) is not None:
-                    self.set_state(self.reaction())
-                elif self.training and self.dummy_standing():
-                    self.face_dummy()
-                    self.set_state("attack", target="dummy")
-                else:
-                    self.training = False
-                    self.set_state("idle")
+            self.idle_step(dt)
         elif self.state == "train":
             if not self.dummy_standing():
                 self.training = False
@@ -855,19 +868,10 @@ class Parton:
             self.celebrate(dt)
         elif self.state == "evade":
             self.evade_step(dt)
-
         elif self.state in ("doze", "sleep"):
             self.sleeping(now, dt)
         elif self.state == "groggy":
-            # Dazed: it looks one way, then the other...
-            self.look_left -= dt
-            if self.look_left <= 0:
-                self.looks_left -= 1
-                if self.looks_left > 0:
-                    self.turn(-self.facing)      # turning its head, not moving
-                    self.look_left = GROGGY_LOOK_SECONDS
-                else:
-                    self.set_state("shuffle")    # ...and wanders off a little
+            self.groggy_step(dt)
         elif self.state == "shuffle":
             self.move_towards(self.target, SHUFFLE_SPEED, dt)
             if self.x == self.target:            # far enough from that cursor: back to sleep
@@ -883,61 +887,92 @@ class Parton:
         elif self.state in ("hurt", "dead"):
             self.knocked(dt)                 # pushed by a hit, or falling if hit in the air
 
-        if self.pressed and self.state != "held":
-            self.check_drag_start()
-
-        before = (self.anim, self.frame_index)
-        finished = self.animate(dt)
-        if (self.state in ("attack", "air_attack")
-                and self.anim == before[0] and self.frame_index != before[1]
-                and self.frame_index in SLASH_FRAMES.get(self.anim, ())
-                and self.slash_hits_dummy()):
-            if self.dummy.take_hit(self.point_on_dummy(SLASH_CENTER)):   # any slash that reaches it hurts it
-                self.celebrate_pending = True    # ...and if that broke it: celebrate
-            elif self.app.settings["dummy_hits_back"] and random.random() < COUNTER_CHANCE:
-                self.root.after(COUNTER_DELAY_MS, self.dummy_hits_back)
-
-        self.check_impacts(dt)
-
-        if finished:
-            if self.state == "attack" and self.celebrate_pending:
-                self.celebrate_pending = False
+    def idle_step(self, dt):
+        """Standing still, until its rest (or its short pause) is over."""
+        self.idle_left -= dt
+        if self.idle_left <= 0:
+            # After a short pause, go back to the cursor if it is still in
+            # sight, carry on training, or stay idle for a normal while.
+            # After a normal idle: sometimes train on the dummy, else wander.
+            if not self.pausing:
+                if self.dummy_in_range() and random.random() < TRAIN_CHANCE:
+                    self.set_state("train")
+                else:
+                    self.set_state("run")
+            elif self.sees_mouse(VISION_RANGE) is not None:
+                self.set_state(self.reaction())
+            elif self.training and self.dummy_standing():
+                self.face_dummy()
+                self.set_state("attack", target="dummy")
+            else:
                 self.training = False
-                self.set_state("celebrate")
-            elif self.state == "attack" and self.attack_target == "dummy":
-                # Training swing finished: another one after a short pause, or done.
-                self.swings_left -= 1
-                if self.swings_left > 0 and self.dummy_standing():
-                    self.set_state("idle", idle_seconds=TRAIN_PAUSE)
-                else:
-                    self.training = False
-                    self.set_state("idle")
-            elif self.state in ("attack", "air_attack"):
-                self.celebrate_pending = False
-                if self.y > 0:
-                    # Air swing finished: keep falling.
-                    self.state = "jump"
-                    self.set_anim("fall")
-                else:
-                    # Swing finished: short pause and keep watching.
-                    self.set_state("idle", idle_seconds=ATTACK_PAUSE)
-            elif self.state == "hurt":
-                if self.y > 0:
-                    self.state, self.vy = "dropped", min(self.vy, 0.0)   # keeps any push
-                    self.set_anim("fall")
-                elif self.sees_mouse(VISION_RANGE) is not None:
-                    self.set_state(self.reaction())  # strike back (or flee) right away
-                else:
-                    self.set_state("idle", idle_seconds=ATTACK_PAUSE)
-            elif self.state == "doze":
-                self.set_state("sleep")      # slumped: now it sleeps
-            elif self.state == "dead" and not self.closing:
-                self.closing = True
-                self.root.after(int(DEATH_LINGER * 1000), self.vanish)
+                self.set_state("idle")
 
-        self.place()
-        self.update_hearts()
-        self.root.after(TICK_MS, self.tick)
+    def groggy_step(self, dt):
+        # Dazed: it looks one way, then the other...
+        self.look_left -= dt
+        if self.look_left <= 0:
+            self.looks_left -= 1
+            if self.looks_left > 0:
+                self.turn(-self.facing)      # turning its head, not moving
+                self.look_left = GROGGY_LOOK_SECONDS
+            else:
+                self.set_state("shuffle")    # ...and wanders off a little
+
+    def check_slash(self, anim, index):
+        """Any slash that reaches the dummy hurts it, whatever it was aimed at.
+
+        `anim` and `index` are the animation and the frame on show before this
+        update: the slash lands when a swing gets to (or past: a late update may
+        skip frames) one of its SLASH_FRAMES.
+        """
+        if self.state not in ("attack", "air_attack") or self.anim != anim:
+            return
+        if not any(index < frame <= self.frame_index for frame in SLASH_FRAMES.get(anim, ())):
+            return
+        if not self.slash_hits_dummy():
+            return
+        if self.dummy.take_hit(self.point_on_dummy(SLASH_CENTER)):
+            self.celebrate_pending = True    # it broke it: celebrate
+        elif self.app.settings["dummy_hits_back"] and random.random() < COUNTER_CHANCE:
+            self.root.after(COUNTER_DELAY_MS, self.dummy_hits_back)
+
+    def animation_finished(self):
+        """A one-off animation (a swing, a flinch, slumping, dying) has played out."""
+        if self.state == "attack" and self.celebrate_pending:
+            self.celebrate_pending = False
+            self.training = False
+            self.set_state("celebrate")
+        elif self.state == "attack" and self.attack_target == "dummy":
+            # Training swing finished: another one after a short pause, or done.
+            self.swings_left -= 1
+            if self.swings_left > 0 and self.dummy_standing():
+                self.set_state("idle", idle_seconds=TRAIN_PAUSE)
+            else:
+                self.training = False
+                self.set_state("idle")
+        elif self.state in ("attack", "air_attack"):
+            self.celebrate_pending = False
+            if self.y > 0:
+                # Air swing finished: keep falling.
+                self.state = "jump"
+                self.set_anim("fall")
+            else:
+                # Swing finished: short pause and keep watching.
+                self.set_state("idle", idle_seconds=ATTACK_PAUSE)
+        elif self.state == "hurt":
+            if self.y > 0:
+                self.state, self.vy = "dropped", min(self.vy, 0.0)   # keeps any push
+                self.set_anim("fall")
+            elif self.sees_mouse(VISION_RANGE) is not None:
+                self.set_state(self.reaction())  # strike back (or flee) right away
+            else:
+                self.set_state("idle", idle_seconds=ATTACK_PAUSE)
+        elif self.state == "doze":
+            self.set_state("sleep")      # slumped: now it sleeps
+        elif self.state == "dead" and not self.closing:
+            self.closing = True
+            self.root.after(int(DEATH_LINGER * 1000), self.vanish)
 
     def update_hearts(self):
         """Show its health above its head while the cursor is over its body."""
@@ -977,6 +1012,7 @@ class Parton:
     def track_mouse(self, now):
         """Note when the mouse was last used: moved, or a button pressed (anywhere)."""
         position = mouse_pos()
+        self.mouse_trail.add(*position)
         if position != self.last_mouse or ui.any_mouse_button_down():
             self.last_mouse, self.last_mouse_move = position, now
 
@@ -999,7 +1035,10 @@ class Parton:
         mx, my = mouse_pos()
         return l <= mx <= r and bottom - t <= my <= bottom - b
 
-
+    def cursor_sneaking(self):
+        """True while the mouse moves slowly (or not at all): too quietly to wake it."""
+        vx, vy = self.mouse_trail.speed()
+        return (vx * vx + vy * vy) ** 0.5 < SNEAK_SPEED
 
     def sleep_now(self):
         """Put to sleep from the menu (on the ground; not while held or flying)."""
@@ -1013,7 +1052,9 @@ class Parton:
     def sleeping(self, now, dt):
         """Asleep: "Z"s float up until the cursor comes near again.
 
-        Only a cursor that has moved since it fell asleep wakes it. Put to sleep
+        Only a cursor that has moved since it fell asleep wakes it, and one
+        that moves slowly (SNEAK_SPEED) sneaks up on it: that one wakes it only
+        when it touches its body. Put to sleep
         from the menu, the cursor must first go away before coming near wakes it.
         In calm mode the cursor never wakes it (a hit, picking it up or "Wake
         Parton" in the menu still do), but rubbing it for a while bothers it:
@@ -1033,7 +1074,8 @@ class Parton:
                 and self.cursor_in_sight(VISION_RANGE, taskbar=True) is not None)
         if self.wake_guard and not near:
             self.wake_guard = False
-        if near and not self.wake_guard and self.last_mouse_move > self.slept_at:
+        noticed = self.cursor_over_body() or not self.cursor_sneaking()
+        if near and noticed and not self.wake_guard and self.last_mouse_move > self.slept_at:
             self.wake()
             return
         if now >= self.next_emote:
