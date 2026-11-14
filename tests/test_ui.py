@@ -113,9 +113,26 @@ class Emotes(TkCase):
         self.assertIsNone(emote.job)
         self.assertFalse(emote.window.winfo_viewable())
 
+    def test_it_can_fade_in(self):
+        emote = ui.Emote(self.root, ui.SLEEP_Z, ui.SKY, rise=50, seconds=1.0, fade_in=0.3)
+        emote.show(lambda: (400, 400))
+        self.pump(0.05)
+        early = float(emote.window.attributes("-alpha"))
+        self.pump(0.3)
+        self.assertLess(early, 0.6)                                       # still appearing
+        self.assertAlmostEqual(float(emote.window.attributes("-alpha")), 1.0, delta=0.05)
+
+    def test_it_can_drift_sideways(self):
+        emote = ui.Emote(self.root, ui.SLEEP_Z, ui.SKY, rise=50, seconds=0.6)
+        emote.show(lambda: (400, 400), drift=40)
+        self.pump(0.05)
+        x0 = emote.window.winfo_rootx()
+        self.pump(0.4)
+        self.assertGreater(emote.window.winfo_rootx(), x0 + 15)
+
     def test_the_drawings(self):
-        self.assertEqual(len(ui.QUESTION), 6)
-        self.assertEqual(len(ui.EXCLAMATION), 6)
+        for drawing in (ui.QUESTION, ui.EXCLAMATION, ui.SLEEP_Z, ui.HEART):
+            self.assertEqual(len({len(row) for row in drawing}), 1)   # all rows the same width
 
 
 @unittest.skipUnless(ui.available(), "the Nanofon font is not in assets/ui")

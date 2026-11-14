@@ -38,6 +38,19 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
 - **Runs away** from the cursor when it has only two hits left (dashing if
   the cursor is very close and hopping around to dodge your clicks), until it
   has healed a bit.
+- **Dozes off** when the mouse hasn't moved or clicked for a minute (and
+  nothing has hit it): it slumps where it
+  stands, eyes closed, with "Z"s floating up from its head one after another,
+  drifting the way it faces. Bring the cursor near (down on the taskbar next
+  to it counts too) and it
+  wakes up with a "!"; hitting it or picking it up also wakes it. In calm
+  mode the cursor never wakes it: only a hit, picking it up or "Wake Parton"
+  in the menu do. However it wakes up, a "!" pops over its head; woken by a
+  hit, it also hops aside, startled, keeping its eyes on the cursor. In calm
+  mode, rubbing the cursor over it for a couple of seconds bothers it: it
+  wakes up ("!"), looks around dazed, walks a little way off and goes back to
+  sleep there. The pack has no sleeping
+  animation, so it uses the slumped frames from the death one.
 - **Celebrates** with a couple of hops when one of its swings breaks the
   dummy.
 - **Shows its health**: put the cursor over Parton and a row of hearts
@@ -91,6 +104,9 @@ to pick it; click anywhere else or press Escape to close it:
 - **Revive** a character that has died (the dummy without waiting).
 - **Hide** or **show** each one, to have only one of them on the screen. A
   hidden dummy doesn't come back on its own.
+- **Sleep Parton** puts him to sleep right away (**Wake Parton** wakes him).
+  The cursor, right next to him after using the menu, doesn't wake him as it
+  leaves; once it has gone away, bringing it back near does.
 - **Settings** opens the settings in the same spot; each one is switched on
   or off with a click (the settings stay open so you can see the change), and
   **Back** returns to the main menu:
@@ -176,8 +192,9 @@ It runs every test in `tests/` (about 45 seconds), with nothing to install:
 
 - `test_physics.py`: throwing, falling, bouncing and the click-or-drag rule.
 - `test_settings.py`: saving and loading the settings.
-- `test_ui.py`: the menu, hearts, "!" and "?", text and cursors.
-- `test_app.py`: Parton and the dummy together: chasing and calm mode, the
+- `test_ui.py`: the menu, hearts, the "!", "?" and "Z", text and cursors.
+- `test_app.py`: Parton and the dummy together: chasing and calm mode,
+  dozing off and waking up, the
   mid-air swing, dodging and knockback, the dummy hitting back, where the
   impacts land, the hearts, the cursors, the menu and settings, and do not
   disturb.
@@ -219,6 +236,11 @@ The constants at the top of `parton.py` control its behavior:
 | `HEAL_DELAY`, `HEAL_INTERVAL` | How long without being hit before it heals, and how often it heals a hit |
 | `FLEE_AT`, `FLEE_DASH_DISTANCE` | With how many hits left it runs away, and how close the cursor must be for it to dash |
 | `FLEE_JUMP_HEIGHT`, `FLEE_JUMPS_PER_SECOND` | Height of its dodging hops while fleeing, and how often it hops (cursor far / close) |
+| `SLEEP_AFTER`, `WAKE_PAUSE` | How long the mouse must be still for it to doze off, and how long it takes to come round |
+| `STARTLE_PUSH`, `STARTLE_LIFT` | How far aside and how high it hops when a hit wakes it up |
+| `NUDGE_SECONDS`, `SHUFFLE_DISTANCE`, `SHUFFLE_SPEED` | Calm mode: how long the cursor must rub it asleep before it gets up, and how far and how fast it walks off |
+| `GROGGY_LOOKS`, `GROGGY_LOOK_SECONDS` | How many times it looks around, dazed, before walking off, and how long each look lasts |
+| `Z_EVERY`, `Z_SECONDS`, `Z_RISE`, `Z_DRIFT` | How often a "Z" starts floating up while it sleeps, how long each lasts, and how far it rises and drifts sideways |
 | `CELEBRATE_HOPS`, `CELEBRATE_HOP_HEIGHT` | How many hops it does after breaking the dummy, and how high |
 | `TRAIN_CHANCE`, `TRAIN_RANGE` | How often it goes to train on the dummy, and from how far |
 | `TRAIN_SWINGS`, `TRAIN_PAUSE` | How many swings per training session, and the pause between them |
@@ -248,8 +270,8 @@ screen edge).
 `ui.py` draws the menu and the hearts: `UI_SCALE` sets their pixel size
 (keep it the same as the characters' `SCALE`), `HEART` is the heart's drawing, `TEXT_SCALE` the pixel size of
 the menu's text (half the characters', so the buttons stay small), `HEARTS_GAP` how far above the head
-the hearts sit and `HEART_GAP` the space between hearts. `EXCLAMATION` and
-`QUESTION` are the "!" and "?" drawings, and `EMOTE_SECONDS`, `EMOTE_RISE`
+the hearts sit and `HEART_GAP` the space between hearts. `EXCLAMATION`,
+`QUESTION` and `SLEEP_Z` are the "!", "?" and "Z" drawings, and `EMOTE_SECONDS`, `EMOTE_RISE`
 and `EMOTE_FADE_FROM` how long they last, how far they float up and when they
 start fading.
 

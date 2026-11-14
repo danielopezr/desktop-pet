@@ -14,6 +14,17 @@ import parton
 import ui
 
 
+def _without_key(frame):
+    """A frame as shown on screen, with the see-through color made transparent again."""
+    rgba = frame.convert("RGBA")
+    px = rgba.load()
+    for y in range(rgba.height):
+        for x in range(rgba.width):
+            if px[x, y][:3] == (255, 0, 254):
+                px[x, y] = (0, 0, 0, 0)
+    return rgba
+
+
 @needs_sprites
 class Basics(AppCase):
     def test_both_start_alive_on_the_taskbar(self):
@@ -67,6 +78,31 @@ class Cursor(AppCase):
         self.watch_states(1.0)
         self.assertGreaterEqual(shown.call_count, 1)
 
+    def test_the_heads_up_is_centered_on_its_head(self):
+        """In every pose, facing either way, the "!" is right over the middle of the
+        head in the frame on show (measured on the image itself, axe left out)."""
+        from PIL import Image, ImageTk
+        self.park_parton()
+        for name in ("idle", "run", "dash", "jump", "fall", "attack1", "hurt"):
+            for facing in (1, -1):
+                with self.subTest(animation=name, facing=facing):
+                    self.p.facing = facing
+                    self.p.set_anim(name, restart=True)
+                    self.p.animate(0)
+                    self.p.place()
+                    self.p.alert.show(self.p.head_top)
+                    self.pump(0.03)
+                    shown = ImageTk.getimage(self.p.shown).convert("RGB")   # at screen size
+                    frame = shown.resize((shown.width // parton.SCALE, shown.height // parton.SCALE),
+                                         Image.NEAREST)
+                    head = parton.head_offset(_without_key(frame))
+                    if head is None:
+                        continue                 # horns hidden (a white flash): it keeps the last spot
+                    window_center = self.p.root.winfo_rootx() + self.p.width / 2
+                    alert = self.p.alert.window
+                    alert_center = alert.winfo_rootx() + alert.winfo_width() / 2
+                    self.assertAlmostEqual(alert_center, window_center + head, delta=2)
+
     def test_calm_mode_ignores_it(self):
         self.app.settings["calm"] = True
         self.park_parton(seconds=0.2)
@@ -91,6 +127,232 @@ class Cursor(AppCase):
         self.assertGreaterEqual(samples[0][0], parton.AIR_ATTACK_FIRST_FRAME)
         heights = [y for _, y in samples]
         self.assertLess(heights[-1], heights[0])        # it keeps moving down: no hanging still
+
+
+@needs_sprites
+class Sleeping(AppCase):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(parton, "SLEEP_AFTER", 0.4)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.alert = mock.Mock(wraps=self.p.alert.show)
+        self.p.alert.show = self.alert
+        self.zzz = mock.Mock()                         # counts the "Z"s, whichever of the two
+        for z in self.p.zzz:
+            def show(head, drift=0, real=z.show):
+                self.zzz(head)
+                real(head, drift=drift)
+            z.show = show
+
+    def fall_asleep(self):
+        lo, hi = self.p.bounds()
+        self.p.x = (lo + hi) / 2
+        self.p.set_state("idle")
+        self.p.idle_left = 100                         # a long, normal rest
+        self.cursor[:] = [int(self.p.x + 800), int(self.bottom - 600)]   # far, and still
+        self.pump(0.1)
+        self.p.last_mouse_move = time.perf_counter() - 1
+        return self.pump(3.0, until=lambda: self.p.state == "sleep")
+
+    def test_it_dozes_off_when_the_mouse_is_still(self):
+        self.assertTrue(self.fall_asleep())
+        self.pump(parton.Z_EVERY + 0.5)
+        self.assertEqual(self.p.state, "sleep")
+        self.assertGreaterEqual(self.zzz.call_count, 1)
+
+    def test_the_zs_rise_from_its_head_diagonally_one_after_another(self):
+        for facing in (1, -1):
+            with self.subTest(facing=facing):
+                self.fall_asleep()
+                self.p.facing = facing
+                begin = time.perf_counter()          # Zs from before it turned don't count
+                both, starts, ends = False, [], []
+                seen = {}
+                end = time.perf_counter() + 4.0                 # a few Zs, with margin for a busy PC
+                while time.perf_counter() < end:
+                    self.app.root.update()
+                    rising = [z for z in self.p.zzz if z.job is not None]
+                    both = both or len(rising) == 2
+                    hx, hy = self.p.head_top()
+                    for z in (z for z in rising if z.start >= begin):
+                        w = z.window
+                        dx = w.winfo_rootx() + w.winfo_width() / 2 - hx
+                        gap = hy - (w.winfo_rooty() + w.winfo_height())
+                        if seen.get(id(z)) != z.start:       # a new Z: where it starts
+                            seen[id(z)] = z.start
+                            starts.append((dx, gap))
+                        ends.append(dx)
+                    time.sleep(0.01)
+                self.assertTrue(both, "a new Z should start before the last one is gone")
+                for dx, gap in starts:                       # from the middle of its head...
+                    self.assertLessEqual(abs(dx), 2)
+                    self.assertLessEqual(gap, ui.HEARTS_GAP + 2)
+                self.assertGreater(max(facing * dx for dx in ends), parton.Z_DRIFT / 2)   # ...towards where it faces
+
+    def test_the_cursor_coming_near_wakes_it_with_a_heads_up(self):
+        self.fall_asleep()
+        self.cursor[:] = [int(self.p.x + 300), int(self.bottom - 60)]
+        self.assertTrue(self.pump(1.0, until=lambda: self.p.state not in ("doze", "sleep")))
+        self.assertEqual(self.alert.call_count, 1)
+        states = self.watch_states(1.5)
+        self.assertIn("chase", states)
+        self.assertEqual(self.alert.call_count, 1)     # no second "!" for the chase
+
+    def test_the_mouse_moving_far_away_does_not_wake_it(self):
+        self.fall_asleep()
+        self.cursor[:] = [int(self.p.x + 900), int(self.bottom - 700)]
+        self.pump(0.6)
+        self.assertEqual(self.p.state, "sleep")
+
+    def test_the_cursor_on_the_taskbar_next_to_it_wakes_it(self):
+        self.fall_asleep()
+        self.cursor[:] = [int(self.p.x + 180), int(self.bottom + 25)]   # down on the taskbar
+        self.assertTrue(self.pump(1.0, until=lambda: self.p.state not in ("doze", "sleep")))
+        self.assertEqual(self.alert.call_count, 1)
+
+    def test_a_click_keeps_it_awake(self):
+        lo, hi = self.p.bounds()
+        self.p.x = (lo + hi) / 2
+        self.p.set_state("idle")
+        self.p.idle_left = 100
+        self.cursor[:] = [int(self.p.x + 800), int(self.bottom - 600)]   # far, and still
+        self.pump(0.1)
+        self.p.last_mouse_move = time.perf_counter() - 1
+        self.buttons = True                            # a click somewhere, without moving
+        self.pump(0.05)
+        self.buttons = False
+        self.pump(parton.SLEEP_AFTER * 0.8)
+        self.assertNotIn(self.p.state, ("doze", "sleep"))
+        self.assertTrue(self.pump(2.0, until=lambda: self.p.state == "sleep"))   # later, yes
+
+    def test_it_does_not_doze_off_right_after_being_hit(self):
+        lo, hi = self.p.bounds()
+        self.p.x = (lo + hi) / 2
+        self.cursor[:] = [int(self.p.x + 800), int(self.bottom - 600)]
+        self.pump(0.1)
+        self.p.last_mouse_move = time.perf_counter() - 5   # the mouse has been still a while...
+        self.p.hit()                                   # ...but it was just hit
+        states = self.watch_states(parton.SLEEP_AFTER * 0.8)
+        self.assertNotIn("doze", states)               # it waits the full time after the hit
+
+    def test_a_hit_wakes_it_with_a_startled_hop_aside(self):
+        self.fall_asleep()
+        x0 = self.p.x
+        self.cursor[:] = [int(self.p.x + 40), int(self.bottom - 40)]   # hit from its right
+        hits = self.p.hits
+        self.p.hit()
+        self.assertEqual(self.p.hits, hits + 1)                      # the hit still counts
+        self.assertEqual(self.alert.call_count, 1)                   # "!"
+        peak, facings = 0.0, set()
+        end = time.perf_counter() + 1.2
+        while time.perf_counter() < end:
+            self.app.root.update()
+            peak = max(peak, self.p.y)
+            facings.add(self.p.facing)
+            time.sleep(0.005)
+        self.assertGreater(peak, 70)                                 # a good hop...
+        self.assertLess(peak, 130)                                   # ...but not a big jump
+        self.assertLess(self.p.x, x0 - 80)                           # aside, away from the cursor
+        self.assertEqual(self.p.y, 0)                                # back on its feet
+        self.assertEqual(facings, {1})                               # eyes on the cursor all along
+
+    def test_a_hit_while_awake_is_no_hop(self):
+        self.park_parton()
+        self.cursor[:] = [int(self.p.x + 40), int(self.bottom - 40)]
+        self.p.hit()
+        self.assertEqual(self.p.vx, 0)
+        self.assertEqual(self.alert.call_count, 0)
+
+    def test_picking_it_up_wakes_it_with_a_heads_up(self):
+        self.fall_asleep()
+        self.cursor_on_parton()
+        self.p.grab()
+        self.assertEqual(self.p.state, "held")
+        self.assertEqual(self.alert.call_count, 1)
+
+    def test_in_calm_mode_the_cursor_never_wakes_it(self):
+        self.app.settings["calm"] = True
+        self.fall_asleep()
+        for x in range(-200, 200, 8):                  # all over it and around it
+            self.cursor[:] = [int(self.p.x + x), int(self.bottom - 40)]
+            self.pump(0.02)
+        self.cursor[:] = [int(self.p.x + 60), int(self.bottom + 20)]    # the taskbar too
+        self.pump(0.3)
+        self.assertTrue(self.p.asleep())
+        self.assertEqual(self.alert.call_count, 0)
+        self.p.hit()                                   # a hit still does
+        self.assertFalse(self.p.asleep())
+
+    def rub(self, seconds):
+        """Move the cursor back and forth over its body for `seconds`."""
+        end = time.perf_counter() + seconds
+        step = 0
+        while time.perf_counter() < end:
+            step += 1
+            self.cursor[:] = [int(self.p.x + (step % 10 - 5) * 4), int(self.bottom - 30)]
+            self.app.root.update()
+            time.sleep(0.02)
+
+    def test_in_calm_mode_rubbing_it_makes_it_look_around_walk_off_and_nap_again(self):
+        self.app.settings["calm"] = True
+        self.fall_asleep()
+        x0 = self.p.x
+        head0 = self.p.head_top()[0]                                 # where it is on the screen
+        self.rub(parton.NUDGE_SECONDS + 0.3)
+        self.assertEqual(self.p.state, "groggy")                     # up, dazed...
+        self.cursor[:] = [int(x0 + 10), int(self.bottom - 30)]
+        facings, states, heads = set(), [], []
+        end = time.perf_counter() + 5.0
+        while time.perf_counter() < end and self.p.state != "doze":
+            self.app.root.update()
+            if self.p.state == "groggy":
+                facings.add(self.p.facing)
+                heads.append(self.p.head_top()[0])
+            if not states or states[-1] != self.p.state:
+                states.append(self.p.state)
+            time.sleep(0.005)
+        self.assertEqual(facings, {1, -1})                           # ...looking one way and the other...
+        self.assertLessEqual(max(heads) - min(heads), 2)             # ...without its head jumping about
+        self.assertEqual(states, ["groggy", "shuffle", "doze"])      # ...then walks off, and naps
+        self.assertGreater(abs(self.p.head_top()[0] - head0), parton.SHUFFLE_DISTANCE * 0.8)
+        self.assertEqual(self.alert.call_count, 1)                   # "!" as it wakes up
+        self.assertTrue(self.pump(1.5, until=lambda: self.p.state == "sleep"))
+
+    def test_in_calm_mode_a_quick_pass_over_it_does_not_bother_it(self):
+        self.app.settings["calm"] = True
+        self.fall_asleep()
+        for _ in range(3):                                           # a few short passes
+            self.rub(parton.NUDGE_SECONDS * 0.3)
+            self.cursor[:] = [int(self.p.x + 400), int(self.bottom - 300)]
+            self.pump(0.6)
+        self.assertTrue(self.p.asleep())
+        self.assertEqual(self.alert.call_count, 0)
+
+    def test_a_cursor_left_next_to_it_in_calm_mode_lets_it_sleep(self):
+        self.app.settings["calm"] = True
+        lo, hi = self.p.bounds()
+        self.p.x = (lo + hi) / 2
+        self.p.set_state("idle")
+        self.p.idle_left = 100
+        self.cursor[:] = [int(self.p.x + 200), int(self.bottom - 60)]   # near, and still
+        self.pump(0.1)
+        self.p.last_mouse_move = time.perf_counter() - 1
+        self.assertTrue(self.pump(3.0, until=lambda: self.p.state == "sleep"))
+        states = self.watch_states(1.0)
+        self.assertEqual(states, ["sleep"])            # it doesn't keep waking up
+
+    def test_not_while_the_mouse_moves(self):
+        lo, hi = self.p.bounds()
+        self.p.x = (lo + hi) / 2
+        self.p.set_state("idle")
+        self.p.idle_left = 100
+        end = time.perf_counter() + 1.2
+        while time.perf_counter() < end:
+            self.cursor[:] = [int(self.p.x + 800 + (time.perf_counter() * 50) % 40), int(self.bottom - 600)]
+            self.app.root.update()
+            time.sleep(0.01)
+        self.assertNotIn(self.p.state, ("doze", "sleep"))
 
 
 @needs_sprites
@@ -319,7 +581,7 @@ class MenuAndSettings(AppCase):
     def test_main_menu(self):
         menu = self.open_menu()
         labels = [label for label, _ in self.labels(menu)]
-        self.assertEqual(labels, ["Hide Parton", "Hide dummy", "Settings", "Exit"])
+        self.assertEqual(labels, ["Hide Parton", "Sleep Parton", "Hide dummy", "Settings", "Exit"])
 
     def test_settings_open_in_place_and_stay_open_after_a_switch(self):
         menu = self.open_menu()
@@ -334,7 +596,7 @@ class MenuAndSettings(AppCase):
         self.assertFalse(self.app.menu.closed)                      # still open...
         self.assertEqual(self.labels(self.app.menu)[0][0], "Calm mode: on")   # ...showing the change
         self.pick("Back")
-        self.assertEqual(self.labels(self.app.menu)[2][0], "Settings")
+        self.assertEqual(self.labels(self.app.menu)[3][0], "Settings")
 
     def test_hide_and_show(self):
         self.open_menu()
@@ -344,6 +606,35 @@ class MenuAndSettings(AppCase):
         self.open_menu()
         self.pick("Show Parton")
         self.assertFalse(self.p.hidden)
+
+    def test_sleep_and_wake_from_the_menu(self):
+        self.park_parton(seconds=0.2)
+        self.app.settings["calm"] = True
+        self.cursor_on_parton()                        # the menu is opened on him
+        self.open_menu()
+        self.pick("Sleep Parton")
+        self.assertTrue(self.p.asleep())
+        # Moving the cursor away doesn't wake him...
+        for step in range(20):
+            self.cursor[0] += 6
+            self.pump(0.02)
+        self.assertTrue(self.p.asleep())
+        self.open_menu()
+        self.assertIn("Wake Parton", [label for label, _ in self.labels(self.app.menu)])
+        self.pick("Wake Parton")
+        self.assertFalse(self.p.asleep())
+
+    def test_put_to_sleep_the_cursor_must_leave_before_it_can_wake_him(self):
+        self.park_parton(seconds=0.2)
+        self.cursor_on_parton()
+        self.p.sleep_now()
+        self.cursor[0] += 30                           # still near: he sleeps on
+        self.pump(0.3)
+        self.assertTrue(self.p.asleep())
+        self.cursor[:] = [int(self.p.x + 900), int(self.bottom - 700)]   # gone...
+        self.pump(0.2)
+        self.cursor[:] = [int(self.p.x + 100), int(self.bottom - 40)]    # ...and back
+        self.assertTrue(self.pump(1.0, until=lambda: not self.p.asleep()))
 
     def test_it_closes_when_nobody_is_left(self):
         self.open_menu()

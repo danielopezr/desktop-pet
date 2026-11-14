@@ -91,12 +91,14 @@ class AppCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.cursor = [0, 0]
+        self.buttons = False                      # a simulated mouse button held down
         self.fullscreen = False
         patches = [
             mock.patch.object(parton, "SETTINGS_FILE", Path(self.tmp.name) / "settings.json"),
             mock.patch.object(ui, "CURSOR_DIR", Path(self.tmp.name) / "cursors"),
             mock.patch.object(ui, "_cursors", None),
             mock.patch.object(parton, "fullscreen_app_open", lambda: self.fullscreen),
+            mock.patch.object(ui, "any_mouse_button_down", lambda: self.buttons),
             mock.patch.object(parton, "TRAIN_CHANCE", 0.0),       # it trains only when a test says so
             mock.patch.object(parton, "COUNTER_CHANCE", 0.0),
             mock.patch.object(parton, "EVADE_CHANCE", 0.0),

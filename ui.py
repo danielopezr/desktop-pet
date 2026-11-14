@@ -54,6 +54,13 @@ EXCLAMATION = ("##",
                "##",
                "..",
                "##")
+# A 5x5 "Z", floating up while Parton sleeps.
+SLEEP_Z = ("#####",
+           "...#.",
+           "..#..",
+           ".#...",
+           "#####")
+SKY = (170, 205, 255, 255)        # the "Z"
 EMOTE_SECONDS = 0.9       # how long an emote lasts
 EMOTE_RISE = 40           # how far it floats up meanwhile, in screen pixels
 EMOTE_FADE_FROM = 0.4     # share of its time it stays solid before fading out
@@ -64,6 +71,12 @@ FONT = Path(__file__).parent / "assets" / "ui" / "Nanofon.ttf"
 def available():
     """True if the menu's pixel font is in assets/ui."""
     return FONT.exists()
+
+
+def any_mouse_button_down():
+    """True while the left, right or middle mouse button is held down, anywhere."""
+    state = ctypes.windll.user32.GetAsyncKeyState
+    return any(state(vk) & 0x8000 for vk in (0x01, 0x02, 0x04))
 
 
 def mouse_pos():
@@ -312,7 +325,6 @@ class PopupMenu:
     SEP_GAP = 3           # gap left by a separator, in drawing pixels
     PAD_X = 8             # from the button's sides to its text, in screen pixels
     PAD_Y = 3             # above and below the text, in screen pixels
-    VK_BUTTONS = (0x01, 0x02, 0x04)  # left, right and middle mouse buttons
 
     def __init__(self, master, items, x, y, on_choose, flip=True):
         self.on_choose = on_choose
@@ -430,10 +442,9 @@ class PopupMenu:
             self.close()
             self.on_choose(self.rows[index][1])
 
-    @classmethod
-    def mouse_buttons_down(cls):
-        state = ctypes.windll.user32.GetAsyncKeyState
-        return any(state(vk) & 0x8000 for vk in cls.VK_BUTTONS)
+    @staticmethod
+    def mouse_buttons_down():
+        return any_mouse_button_down()
 
     def watch(self):
         """Close on a new click outside the menu."""
@@ -460,7 +471,11 @@ class Emote:
     floats up and fades away. It follows the character while it lasts and
     lets the mouse through."""
 
-    def __init__(self, master, drawing, color):
+    def __init__(self, master, drawing, color, rise=None, seconds=None, fade_in=0.0):
+        self.rise = EMOTE_RISE if rise is None else rise
+        self.seconds = EMOTE_SECONDS if seconds is None else seconds
+        self.fade_in = fade_in                # share of its time it takes to appear (0: at once)
+        self.drift = 0
         self.window = tk.Toplevel(master)
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
@@ -477,29 +492,33 @@ class Emote:
         make_click_through(self.window)
         self.job = None
 
-    def show(self, head):
+    def show(self, head, drift=0):
         """Pop it over the head: `head()` gives the screen (x, y) of the top of the
-        head, asked again on every frame so it follows the character."""
+        head, asked again on every frame so it follows the character. On its way
+        up it floats `drift` pixels sideways (a diagonal)."""
         if self.job:
             self.window.after_cancel(self.job)
         self.head = head
+        self.drift = drift
         self.start = time.perf_counter()
-        self.window.attributes("-alpha", 1.0)
+        self.window.attributes("-alpha", 0.0 if self.fade_in else 1.0)
         self.window.deiconify()
         self.window.lift()
         self.step()
 
     def step(self):
-        t = (time.perf_counter() - self.start) / EMOTE_SECONDS
+        t = (time.perf_counter() - self.start) / self.seconds
         if t >= 1:
             self.job = None
             self.window.withdraw()
             return
         x, y = self.head()
+        x += self.drift * t
         w, h = self.photo.width(), self.photo.height()
-        self.window.geometry(f"{w}x{h}+{round(x - w / 2)}+{round(y - HEARTS_GAP - h - EMOTE_RISE * t)}")
+        self.window.geometry(f"{w}x{h}+{round(x - w / 2)}+{round(y - HEARTS_GAP - h - self.rise * t)}")
         fade = max(0.0, (t - EMOTE_FADE_FROM) / (1 - EMOTE_FADE_FROM))
-        self.window.attributes("-alpha", 1.0 - fade)
+        appear = min(1.0, t / self.fade_in) if self.fade_in else 1.0
+        self.window.attributes("-alpha", appear * (1.0 - fade))
         self.job = self.window.after(16, self.step)
 
 
