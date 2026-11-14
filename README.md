@@ -24,7 +24,7 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
   and it is **thrown** that way, as fast as you were moving, bouncing off the
   screen edges. A **hard landing** hurts it.
 - **Hit it** with a quick left click: it flinches and turns to face you. On
-  the ninth hit it **dies** and disappears.
+  the sixth hit it **dies** and disappears.
 - **Heals** over time: after a few seconds without being hit, it recovers
   one hit at a time.
 - **Runs away** from the cursor when it has only two hits left (dashing if
@@ -32,6 +32,9 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
   has healed a bit.
 - **Celebrates** with a couple of hops when one of its swings breaks the
   dummy.
+- **Shows its health**: put the cursor over Parton and a row of hearts
+  appears above its head. It has three, and each heart is two hits: the first
+  turns it into a half heart, the second empties it.
 
 ### The training dummy
 
@@ -42,7 +45,8 @@ The dummy (`dummy.py`) comes up together with Parton, in the same program:
 - **Pick it up and throw it** just like Parton, but it is **twice as heavy**:
   the same flick throws it half as fast, and it bounces less off the edges.
   Unlike Parton, landings don't hurt it.
-- Your hits and Parton's add up, even while it is in the air: on the 17th it
+- Put the cursor over it to see its health: seven hearts, two hits each.
+- Your hits and Parton's add up, even while it is in the air: on the 14th it
   **breaks** and disappears, and **comes back** on its own 15 seconds later.
 
 ### Throwing them at each other
@@ -55,7 +59,10 @@ The dummy (`dummy.py`) comes up together with Parton, in the same program:
 
 ### The menu
 
-Right click on Parton or on the dummy to open a small menu:
+Right click on Parton or on the dummy to open a small menu of pixel-art
+buttons (or the plain Windows menu if the UI pieces are
+missing). Click an option to pick it; click anywhere else or press Escape to
+close it:
 
 - **Revive** a character that has died (the dummy without waiting).
 - **Hide** or **show** each one, to have only one of them on the screen. A
@@ -89,6 +96,13 @@ redistributing them. To get them:
    `python make_cursor.py`. It looks for `pixel-cursors-icons-r4.zip` in your
    Downloads or `Pictures/Assets` folder (or pass its path as an argument) and
    creates `assets/cursor/sword.cur`.
+4. *(Optional, for the styled menu and the hearts)* Download the free
+   **Fantasy UI Kit Lite** by Willosuna from <https://willosuna.itch.io/> and
+   copy these files from its `x1/` folder into `assets/ui/` (without their
+   subfolders): `button_ruby_normal.png`, `button_ruby_hover.png`,
+   `button_ruby_pressed.png`, `heart_full.png`, `heart_half.png` and
+   `heart_empty.png`. Their
+   black outline is removed when they load, to match the characters. Add the **Nanofon** pixel font as `assets/ui/Nanofon.ttf`.
 
 ```
 assets/
@@ -108,13 +122,18 @@ assets/
 │       ├── BREAKING.png
 │       ├── HIT.png
 │       └── IDLE.png
-└── cursor/
-    └── sword.cur
+├── cursor/
+│   └── sword.cur
+└── ui/
+    ├── Nanofon.ttf
+    ├── button_ruby_normal.png, button_ruby_hover.png, button_ruby_pressed.png
+    └── heart_full.png, heart_half.png, heart_empty.png
 ```
 
 If any of Parton's sprites is missing, it shows a message listing the missing
 files. Without the dummy's sprites, Parton runs alone; without the sword
-cursor, the dummy shows a hand cursor.
+cursor, the dummy shows a hand cursor. Without the UI pieces, the menu is the
+plain Windows one and the hearts are plain red and gray squares.
 
 ## Running it
 
@@ -139,7 +158,7 @@ The constants at the top of `parton.py` control its behavior:
 | `TOO_CLOSE`, `DASH_SPEED` | When it dashes back, and how fast |
 | `JUMP_MAX_HEIGHT`, `JUMP_PAUSE` | Highest jump, and the rest between jumps |
 | `AIR_ATTACK_FRAME_MS` | Speed of the mid-air swing |
-| `HITS_TO_DIE`, `DEATH_LINGER` | Hits it takes to die, and how long it lies there before disappearing |
+| `HITS_TO_DIE`, `DEATH_LINGER` | Hits it takes to die (keep it even: two hits per heart), and how long it lies there before disappearing |
 | `HEAL_DELAY`, `HEAL_INTERVAL` | How long without being hit before it heals, and how often it heals a hit |
 | `FLEE_AT`, `FLEE_DASH_DISTANCE` | With how many hits left it runs away, and how close the cursor must be for it to dash |
 | `FLEE_JUMP_HEIGHT`, `FLEE_JUMPS_PER_SECOND` | Height of its dodging hops while fleeing, and how often it hops (cursor far / close) |
@@ -163,11 +182,17 @@ The dummy has its own settings at the top of `dummy.py` (`SCALE`,
 `HITS_TO_DIE`, `RESPAWN_SECONDS`, `WEIGHT`, animation speeds and its starting distance from the
 screen edge).
 
+`ui.py` draws the menu and the hearts: `UI_SCALE` sets their size (the
+kit's pieces are drawn at that multiple), `HEARTS_GAP` how far above the head
+the hearts sit and `HEART_GAP` the space between hearts.
+
 ## Credits
 
 - Parton art by [Jesshiyoo](https://jesshiyoo.itch.io/).
 - Dummy art by [Mattz Art](https://xzany.itch.io/).
-- Sword cursor art by [Willosuna](https://willosuna.itch.io/).
+- Sword cursor, menu and heart art (Fantasy UI Kit Lite) by
+  [Willosuna](https://willosuna.itch.io/).
+- Nanofon pixel font.
 
 ## License
 

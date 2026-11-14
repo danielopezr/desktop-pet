@@ -13,7 +13,7 @@ together with a training dummy (dummy.py), both in this one program.
 - Left click and hold to pick it up; release it anywhere and it falls back
   down to the taskbar. Let go while moving the cursor and it is thrown in
   that direction, as fast as the cursor was moving.
-- A quick left click hits it; on the ninth hit it dies and disappears.
+- A quick left click hits it; on the sixth hit it dies and disappears.
 - Now and then, when the dummy is close enough, Parton goes to it and hits it
   a few times.
 - Right click on either of them: menu to revive, hide or show each one, or
@@ -34,6 +34,7 @@ from tkinter import messagebox
 from PIL import Image, ImageTk
 
 import dummy as training_dummy
+import ui
 from physics import (FALL_DAMAGE_SPEED, GRAVITY, IMPACT_BOUNCE, IMPACT_SPEED, CursorTrail,
                      fly_step, is_drag, throw_velocity)
 
@@ -68,7 +69,7 @@ AIR_SLASH_LAST_FRAME = 8      # it hangs in the air until this frame of the swin
 # Gravity, throwing and click-vs-drag settings are shared with the dummy: see physics.py.
 
 # Getting hit
-HITS_TO_DIE = 9               # hits it takes before dying
+HITS_TO_DIE = 6               # hits it takes before dying (even: two hits per heart)
 DEATH_LINGER = 1.5            # seconds it lies there after dying, before disappearing
 HEAL_DELAY = 10.0             # seconds without being hit before it starts healing
 HEAL_INTERVAL = 6.0           # then it heals one hit every this many seconds
@@ -171,6 +172,7 @@ class App:
     def __init__(self):
         self.root = tk.Tk()
         self.root.withdraw()                      # only the characters' windows show
+        self.menu = None                          # the styled menu, while it is open
         self.dummy = training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
         self.parton = Parton(self.root, self)
 
@@ -190,7 +192,16 @@ class App:
         return items
 
     def show_menu(self, event):
-        """Menu built on the spot, so it always matches what is on the screen."""
+        """Menu built on the spot, so it always matches what is on the screen.
+
+        Drawn with the UI kit if it is in assets/ui; otherwise the plain Windows menu.
+        """
+        if self.menu:
+            self.menu.close()
+        if ui.available():
+            items = self.menu_items() + [None, ("Exit", self.root.destroy)]
+            self.menu = ui.PopupMenu(self.root, items, event.x_root, event.y_root, self.do)
+            return
         menu = tk.Menu(self.root, tearoff=0)
         for label, action in self.menu_items():
             menu.add_command(label=label, command=lambda a=action: self.do(a))
@@ -231,6 +242,9 @@ class Parton:
         self.body_half = body_half * SCALE
         idle_top = union_bbox(raw_frames(ANIMATIONS["idle"][0]))[1]
         self.body_height = (ground - idle_top) * SCALE   # from its feet to the top of its head
+        # Where its head is, from its body center, facing right (the hearts go over it).
+        idle = raw_frames(ANIMATIONS["idle"][0])[0].crop(box)
+        self.head_offset = (ui.head_center(solid_mask(idle)) - idle.width / 2) * SCALE
         self.impact_done = True                   # only a fresh throw can hit the dummy
         self.celebrate_pending = False
 
@@ -250,6 +264,7 @@ class Parton:
         self.label.bind("<ButtonRelease-1>", self.release)
         self.pressed = None                       # (time, x, y) of a left click in progress
         self.dummy = app.dummy                    # None if the dummy's sprites are missing
+        self.hearts = ui.Hearts(master)         # shown while the cursor is over it
         self.shown = None
         self.anim = None
         self.spawn()
@@ -406,6 +421,7 @@ class Parton:
         now = time.perf_counter()
         dt, self.last = min(now - self.last, 0.1), now
         if self.hidden or self.gone:             # off the screen: nothing to do
+            self.hearts.hide()
             self.root.after(TICK_MS, self.tick)
             return
         self.heal(now)
@@ -520,7 +536,20 @@ class Parton:
                 self.root.after(int(DEATH_LINGER * 1000), self.vanish)
 
         self.place()
+        self.update_hearts()
         self.root.after(TICK_MS, self.tick)
+
+    def update_hearts(self):
+        """Show its health above its head while the cursor is over its body."""
+        l, r, b, t = self.body_box()
+        _, _, _, bottom = work_area()
+        mx, my = mouse_pos()
+        head_y = bottom - t
+        if self.alive and l <= mx <= r and head_y <= my <= bottom - b:
+            head_x = self.x + self.facing * self.head_offset
+            self.hearts.show(head_x, head_y, HITS_TO_DIE - self.hits, HITS_TO_DIE)
+        else:
+            self.hearts.hide()
 
     def move_towards(self, target, speed, dt):
         step = speed * dt

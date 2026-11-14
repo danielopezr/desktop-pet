@@ -6,7 +6,7 @@
 - Hold or drag to pick it up and throw it, like Parton, but it is twice as
   heavy: it flies half as fast and bounces less. Thrown at Parton, it hurts
   him.
-- On the 17th hit it breaks and disappears; it comes back on its own after
+- On the 14th hit it breaks and disappears; it comes back on its own after
   RESPAWN_SECONDS, or right away with "Revive dummy" in the menu.
 - Right click: the shared menu (see App in parton.py).
 """
@@ -18,12 +18,13 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageFilter, ImageTk
 
+import ui
 from physics import CursorTrail, fly_step, is_drag, throw_velocity
 
 # --- Settings ------------------------------------------------------------------
 SCALE = 4                 # 80x48 px frames; same pixel size as Parton
 FRAME_W, FRAME_H = 80, 48
-HITS_TO_DIE = 17
+HITS_TO_DIE = 14          # even: two hits per heart
 HIT_FRAME_MS = 60
 BREAK_FRAME_MS = 90
 RUBBLE_VISIBLE_MS = 1_500  # how long the remains stay before it disappears
@@ -165,6 +166,8 @@ class TrainingDummy:
         self.height = (box[3] - box[1]) * SCALE
         self.body = body_box(["IDLE", "HIT"], box)
         self.body_shape = body_mask(["IDLE", "HIT"], box, self.body)
+        # Where its head is in its window (the hearts go over it).
+        self.head_x = ui.head_center(solid_mask(raw_frames("IDLE")[0].crop(box))) * SCALE
         self.idle = load_frames("IDLE", box)
         self.hit = load_frames("HIT", box)
         self.breaking = load_frames("BREAKING", box)
@@ -196,6 +199,7 @@ class TrainingDummy:
         self.anim_job = None
         self.respawn_job = None # pending automatic comeback after breaking
         self.pressed = None     # (time, x, y) of a left click in progress
+        self.hearts = ui.Hearts(master)  # shown while the cursor is over it
         self.reset_position()
 
         shape_window(top_hwnd(self.hitbox), self.body_shape)  # hits only on the silhouette
@@ -333,7 +337,22 @@ class TrainingDummy:
                 if self.y == 0:                     # landed
                     self.state, self.vx = "rest", 0.0
                 self.place()
+        self.update_hearts()
         self.master.after(TICK_MS, self.tick)
+
+    def update_hearts(self):
+        """Show its health above its head while the cursor is over its body."""
+        if not self.can_be_hit():               # broken or hidden
+            self.hearts.hide()
+            return
+        left, right = self.body_span()
+        low, high = self.body_heights()
+        _, _, _, bottom = work_area()
+        mx, my = mouse_pos()
+        if left <= mx <= right and bottom - high <= my <= bottom - low:
+            self.hearts.show(self.x + self.head_x, bottom - high, HITS_TO_DIE - self.hits, HITS_TO_DIE)
+        else:
+            self.hearts.hide()
 
     # --- Window ----------------------------------------------------------------
     def place(self):
