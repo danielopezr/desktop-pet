@@ -124,14 +124,21 @@ def cursor_drawing(rows):
         for x, cell in enumerate(row):
             if cell != ".":
                 core.putpixel((x + 1, y + 1), CURSOR_PALETTE[cell])
-    out = core.copy()
-    for y in range(core.height):
-        for x in range(core.width):
-            if core.getpixel((x, y))[3]:
+    return outline(core, CURSOR_OUTLINE)
+
+
+def outline(image, color):
+    """`image` with a 1-pixel `color` outline around its solid pixels, drawn on
+    the empty pixels next to them (leave an empty border for it)."""
+    out = image.copy()
+    px = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            if px[x, y][3] >= 128:
                 continue
             for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-                if 0 <= nx < core.width and 0 <= ny < core.height and core.getpixel((nx, ny))[3]:
-                    out.putpixel((x, y), CURSOR_OUTLINE)
+                if 0 <= nx < image.width and 0 <= ny < image.height and px[nx, ny][3] >= 128:
+                    out.putpixel((x, y), color)
                     break
     return out
 

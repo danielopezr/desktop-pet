@@ -6,12 +6,17 @@ they run.
 """
 import time
 import unittest
+from ctypes import wintypes
 from unittest import mock
 
 from tests.support import REAL_FULLSCREEN_CHECK, AppCase, Click, cursor_file, needs_sprites
 import dummy
 import parton
+import tray
 import ui
+
+tray.user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+tray.user32.IsWindow.argtypes = [wintypes.HWND]
 
 
 def _without_key(frame):
@@ -699,13 +704,56 @@ class MenuAndSettings(AppCase):
         self.cursor[:] = [int(self.p.x + 100), int(self.bottom - 40)]    # ...and back
         self.assertTrue(self.pump(1.0, until=lambda: not self.p.asleep()))
 
-    def test_it_closes_when_nobody_is_left(self):
+    def click_tray_icon(self, button=tray.WM_RBUTTONUP):
+        """What Windows sends when the icon is clicked, with the cursor down on the taskbar."""
+        self.cursor[:] = [600, self.bottom + 20]
+        tray.user32.PostMessageW(self.app.tray.hwnd, tray.CALLBACK_MESSAGE, 1, button)
+        return self.pump(1.0, until=lambda: self.app.menu is not None and not self.app.menu.closed)
+
+    def test_the_tray_icon_opens_the_menu_above_the_taskbar(self):
+        for button in (tray.WM_RBUTTONUP, tray.WM_LBUTTONUP):
+            self.assertTrue(self.click_tray_icon(button))
+            menu = self.app.menu
+            self.assertEqual([label for label, _ in self.labels(menu)],
+                             ["Hide Parton", "Sleep Parton", "Hide dummy", "Settings", "Exit"])
+            self.assertLessEqual(menu.y + menu.height, self.bottom)
+            menu.close()
+
+    def test_with_the_tray_icon_it_stays_when_nobody_is_left(self):
+        self.open_menu()
+        self.pick("Hide Parton")
+        self.open_menu()
+        self.pick("Hide dummy")
+        self.assertTrue(self.app.root.winfo_exists())
+        self.assertTrue(self.click_tray_icon())              # ...and they can be brought back
+        self.pick("Show Parton")
+        self.assertTrue(self.p.on_screen())
+
+    def test_without_it_it_closes_when_nobody_is_left(self):
+        self.app.tray.remove()
+        self.app.tray = None
         self.open_menu()
         self.pick("Hide Parton")
         self.open_menu()
         self.pick("Hide dummy")
         with self.assertRaises(Exception):
             self.app.root.winfo_exists()
+
+    def test_the_tray_icon_goes_away_with_the_program(self):
+        hwnd = self.app.tray.hwnd
+        self.open_menu()
+        self.pick("Exit")
+        self.assertIsNone(self.app.tray)
+        self.assertFalse(tray.user32.IsWindow(hwnd))
+
+    def test_the_tray_icon_is_drawn_pixel_for_pixel(self):
+        images = parton.tray_images(self.p.box)
+        self.assertEqual(sorted(images), list(parton.TRAY_SIZES))
+        for size, image in images.items():
+            self.assertEqual(image.size, (size, size))
+            self.assertIsNotNone(image.getbbox())
+            alphas = set(image.getchannel("A").tobytes())
+            self.assertLessEqual(alphas, {0, 255})            # crisp: nothing half see-through
 
 
 @needs_sprites
@@ -729,6 +777,13 @@ class DoNotDisturb(AppCase):
         self.pump(parton.FULLSCREEN_CHECK_MS / 1000 + 0.5)
         self.assertFalse(self.app.away)
         self.assertTrue(self.p.root.winfo_viewable())
+
+    def test_switching_it_off_brings_them_back_at_once(self):
+        self.fullscreen = True
+        self.pump(parton.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: self.app.away)
+        self.app.toggle("do_not_disturb")                    # e.g. from the tray icon's menu
+        self.assertFalse(self.app.away)
+        self.assertFalse(self.p.away)
 
 
 

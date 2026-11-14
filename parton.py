@@ -38,6 +38,8 @@ together with a training dummy (dummy.py), both in this one program.
 - Calm mode: it ignores the cursor (no chasing or attacking).
 - Do not disturb: both hide while a full-screen app (a game, a video, a
   presentation) is in front, and come back when it closes.
+- An icon in the system tray opens the same menu, also with nobody on the
+  screen.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
 are ready for later. The sprites are not included in the repository (see
@@ -56,6 +58,7 @@ from tkinter import messagebox
 from PIL import Image, ImageChops, ImageFilter
 
 import dummy as training_dummy
+import tray
 import ui
 from screen import KEY_COLOR, mouse_pos, solid_mask, to_photo, work_area
 from physics import (FALL_DAMAGE_SPEED, GRAVITY, IMPACT_BOUNCE, IMPACT_SPEED, CursorTrail,
@@ -158,6 +161,12 @@ DEFAULT_SETTINGS = {
 SETTING_LABELS = {"calm": "Calm mode", "do_not_disturb": "Do not disturb",
                   "training": "Training", "dummy_hits_back": "Dummy hits back"}
 FULLSCREEN_CHECK_MS = 1000    # how often "do not disturb" looks for a full-screen app
+
+# The icon in the system tray: Parton drawn pixel for pixel, with a light
+# outline so it shows on a dark taskbar too. At 16 px only its head fits.
+TRAY_OUTLINE = ui.TEXT_COLOR
+TRAY_HEAD = 14                # sprite pixels of its head in the smallest icon (16 with the outline)
+TRAY_SIZES = (16, 32, 48)
 
 SPRITES = Path(__file__).parent / "assets" / "parton" / "sprites"
 
@@ -356,8 +365,40 @@ def hit_shape(frames, facing):
     return mask.crop((x0, y0, x1, y1)), (x0, y0)
 
 
+def icon_image(image, size):
+    """`image` cropped to what is drawn in it, outlined and scaled up by whole
+    pixels to fit a `size` square, in the middle of it."""
+    image = image.crop(solid_mask(image).getbbox())
+    framed = Image.new("RGBA", (image.width + 2, image.height + 2))
+    framed.paste(image, (1, 1))
+    image = ui.outline(framed, TRAY_OUTLINE)
+    scale = max(1, min(size // image.width, size // image.height))
+    image = image.resize((image.width * scale, image.height * scale), Image.NEAREST)
+    square = Image.new("RGBA", (size, size))
+    square.paste(image, ((size - image.width) // 2, (size - image.height) // 2))
+    return square
+
+
+def tray_images(box):
+    """Its icon for the system tray, {size: image}: its idle pose, or only its
+    head (between the horns, down) where the whole of it doesn't fit."""
+    frame = animation_frames("idle", box)[0]
+    left, top, right = horns(frame)
+    middle = (left + right) // 2
+    half = TRAY_HEAD // 2
+    head = frame.crop((middle - half, top, middle + half, top + TRAY_HEAD))
+    whole = solid_mask(frame).getbbox()
+    return {size: icon_image(frame if max(whole[2] - whole[0], whole[3] - whole[1]) + 2 <= size
+                             else head, size)
+            for size in TRAY_SIZES}
+
+
 class App:
-    """Owns both characters and the right-click menu they share."""
+    """Owns both characters, the right-click menu they share and the tray icon.
+
+    The program lives on while its tray icon is there, even with nobody on
+    the screen: the icon opens the same menu.
+    """
 
     def __init__(self):
         self.root = tk.Tk()
@@ -367,7 +408,23 @@ class App:
         self.away = False                         # hidden by "do not disturb"
         self.dummy = training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
         self.parton = Parton(self.root, self)
+        try:
+            self.tray = tray.TrayIcon(self.root, tray_images(self.parton.box), "Parton",
+                                      self.tray_clicked)
+        except OSError:
+            self.tray = None                      # no tray: right-clicking them still works
+        self.root.bind("<Destroy>", self.on_destroy, add="+")
         self.watch_fullscreen()
+
+    def on_destroy(self, event):
+        """The program is closing: take its icon out of the tray."""
+        if event.widget is self.root and self.tray:
+            self.tray.remove()
+            self.tray = None
+
+    def tray_clicked(self):
+        """The tray icon: the main menu, at the cursor (above the taskbar)."""
+        self.open_menu(*mouse_pos())
 
     def characters(self):
         return [(name, c) for name, c in (("Parton", self.parton), ("dummy", self.dummy)) if c]
@@ -396,8 +453,14 @@ class App:
     def toggle(self, key):
         self.settings[key] = not self.settings[key]
         save_settings(self.settings)
+        if key == "do_not_disturb":
+            self.check_fullscreen()               # switched off: they come back right away
 
     def watch_fullscreen(self):
+        self.check_fullscreen()
+        self.root.after(FULLSCREEN_CHECK_MS, self.watch_fullscreen)
+
+    def check_fullscreen(self):
         """Do not disturb: hide both while a full-screen app is in front."""
         away = self.settings["do_not_disturb"] and fullscreen_app_open()
         if away != self.away:
@@ -406,7 +469,6 @@ class App:
                 self.menu.close()
             for _, c in self.characters():
                 c.set_away(away)
-        self.root.after(FULLSCREEN_CHECK_MS, self.watch_fullscreen)
 
     def show_menu(self, event):
         """Right click: the main menu, at the cursor."""
@@ -453,11 +515,11 @@ class App:
         self.check_empty()
 
     def check_empty(self):
-        """With nobody left on the screen there is nothing to right-click: close.
-
-        Unless the dummy is about to come back on its own.
+        """With nobody left on the screen and no tray icon, there is nothing to
+        right-click: close. Unless the dummy is about to come back on its own.
         """
-        if not any(c.on_screen() or c.respawning() for _, c in self.characters()):
+        if self.tray is None and not any(c.on_screen() or c.respawning()
+                                         for _, c in self.characters()):
             self.root.destroy()
 
     def run(self):
@@ -475,6 +537,7 @@ class Parton:
         self.root.config(bg=KEY_COLOR)
 
         box, body_half, ground = crop_box()
+        self.box = box                            # its crop of the sprites (the tray icon uses it)
         self.width = (box[2] - box[0]) * SCALE
         self.height = (box[3] - box[1]) * SCALE
         self.ground = (ground - box[1]) * SCALE   # height of the feet inside the window

@@ -99,9 +99,10 @@ when it starts.
 
 ### The menu
 
-Right click on Parton or on the dummy to open a small menu of pixel-art
-buttons (or the plain Windows menu if the font is missing). Click an option
-to pick it; click anywhere else or press Escape to close it:
+Right click on Parton or on the dummy, or click **Parton's icon in the
+system tray** (next to the clock), to open a small menu of pixel-art buttons
+(or the plain Windows menu if the font is missing). Click an option to pick
+it; click anywhere else or press Escape to close it:
 
 - **Revive** a character that has died (the dummy without waiting).
 - **Hide** or **show** each one, to have only one of them on the screen. A
@@ -123,10 +124,13 @@ to pick it; click anywhere else or press Escape to close it:
 The settings are saved in `%APPDATA%\Parton\settings.json`, so they are kept
 the next time it runs.
 
-If neither of them is left on the screen (both dead or hidden) and the dummy
-isn't about to come back, there is nothing left to right-click, so the
-program closes; run it again to bring both back. Only one copy of the program
-runs at a time.
+The tray icon is the way back when neither of them is on the screen (both
+dead or hidden, or away for "do not disturb"): the program keeps running in
+the tray until you pick **Exit**. Windows 11 puts new tray icons among the
+hidden ones (the **^** arrow); drag it next to the clock to keep it in view.
+If the tray isn't there, the program closes as soon as nobody is left on the
+screen to right-click (unless the dummy is about to come back). Only one copy
+of the program runs at a time.
 
 ## Requirements
 
@@ -195,7 +199,7 @@ It runs every test in `tests/` (about a minute and a half), with nothing to inst
 - `test_physics.py`: throwing, falling, bouncing and the click-or-drag rule.
 - `test_settings.py`: saving and loading the settings.
 - `test_ui.py`: the menu, hearts, the "!", "?" and "Z", text and cursors.
-- `test_app.py`: Parton and the dummy together: chasing and calm mode,
+- `test_app.py`: Parton and the dummy together (and the tray icon): chasing and calm mode,
   dozing off and waking up, the
   mid-air swing, dodging and knockback, the dummy hitting back, where the
   impacts land, the hearts, the cursors, the menu and settings, and do not
@@ -279,7 +283,9 @@ and `EMOTE_FADE_FROM` how long they last, how far they float up and when they
 start fading.
 
 `screen.py` holds what all of them share to draw on the screen (the
-transparent color, where the cursor and the taskbar are).
+transparent color, where the cursor and the taskbar are), and `tray.py` the
+tray icon. `TRAY_SIZES`, `TRAY_HEAD` and `TRAY_OUTLINE` in `parton.py` set how
+the icon is drawn: at 16 px only Parton's head fits.
 
 ## Credits
 
