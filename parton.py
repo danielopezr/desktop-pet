@@ -40,6 +40,10 @@ together with a training dummy (dummy.py), both in this one program.
   presentation) is in front, and come back when it closes.
 - An icon in the system tray opens the same menu, also with nobody on the
   screen.
+- It walks on the open windows: now and then it jumps up onto the top of one
+  nearby, lands on them when thrown or falling, rides along when a window is
+  moved, and falls off (unhurt) when the window closes, is covered or it walks
+  off the edge.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
 are ready for later. The sprites are not included in the repository (see
@@ -58,6 +62,7 @@ from tkinter import messagebox
 from PIL import Image, ImageChops, ImageFilter
 
 import dummy as training_dummy
+import platforms
 import tray
 import ui
 from screen import KEY_COLOR, mouse_pos, solid_mask, to_photo, work_area
@@ -130,6 +135,17 @@ TRAIN_RANGE = 600             # only if the dummy is at most this far, in pixels
 TRAIN_SWINGS = (1, 3)         # how many swings per training session (min, max)
 TRAIN_PAUSE = 0.5             # pause between swings, in seconds
 TRAIN_GAP = ATTACK_REACH * 0.8  # distance from the dummy it swings from
+
+# Walking on windows
+PLATFORM_SCAN_MS = 200        # how often it looks at where the open windows are
+LEDGE_MIN = 100               # narrowest stretch of a window's top it stands on, in pixels
+CLIMB_CHANCE = 0.35           # chance of jumping up onto a window instead of wandering, after idling
+CLIMB_MIN = 60                # it only jumps up onto window tops at least this high above it...
+CLIMB_HEIGHT = 450            # ...and at most this high, in pixels
+CLIMB_RANGE = 700             # ...and at most this far to either side
+CLIMB_OVERSHOOT = 40          # it jumps this much higher than the window top, to land on it
+STAY_CHANCE = 0.6             # on a window, chance of wandering along it (else anywhere: maybe off it)
+WALK_OFF_SPEED = 120          # sideways speed it keeps as it walks off the edge of a window
 SLASH_FRAMES = {"attack1": (3,), "attack2": (3, 9)}  # frames where the slash lands
 
 # Dodging the dummy when it is thrown at Parton
@@ -157,9 +173,11 @@ DEFAULT_SETTINGS = {
     "do_not_disturb": True,   # hide while a full-screen app is in front
     "training": True,         # go and hit the dummy now and then
     "dummy_hits_back": True,  # the dummy sometimes hits Parton back
+    "windows": True,          # climb onto and walk on the open windows
 }
 SETTING_LABELS = {"calm": "Calm mode", "do_not_disturb": "Do not disturb",
-                  "training": "Training", "dummy_hits_back": "Dummy hits back"}
+                  "training": "Training", "dummy_hits_back": "Dummy hits back",
+                  "windows": "Walk on windows"}
 FULLSCREEN_CHECK_MS = 1000    # how often "do not disturb" looks for a full-screen app
 
 # The icon in the system tray: Parton drawn pixel for pixel, with a light
@@ -406,6 +424,7 @@ class App:
         self.menu = None                          # the styled menu, while it is open
         self.settings = load_settings()
         self.away = False                         # hidden by "do not disturb"
+        self.ledges = []                          # window tops to stand on: (height, left, right, window)
         self.dummy = training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
         self.parton = Parton(self.root, self)
         try:
@@ -415,6 +434,28 @@ class App:
             self.tray = None                      # no tray: right-clicking them still works
         self.root.bind("<Destroy>", self.on_destroy, add="+")
         self.watch_fullscreen()
+        self.scan_platforms()
+
+    def scan_platforms(self):
+        """Now and then: where the tops of the open windows are (both of them
+        stand on them), and whether each one still has its footing."""
+        try:
+            self.ledges = []
+            if self.settings["windows"] and not self.away:
+                left, top, right, bottom = work_area()
+                found = platforms.ledges(platforms.window_rects(), (left, top, right, bottom),
+                                         LEDGE_MIN)
+                self.ledges = sorted(((bottom - y, l, r, hwnd) for hwnd, l, r, y in found),
+                                     reverse=True)            # the highest first
+            for _, c in self.characters():
+                c.check_footing()
+        finally:
+            self.root.after(PLATFORM_SCAN_MS, self.scan_platforms)
+
+    def ledges_for(self, room):
+        """The window tops with `room` pixels free above them, up to the top of the screen."""
+        _, top, _, bottom = work_area()
+        return [ledge for ledge in self.ledges if ledge[0] + room <= bottom - top]
 
     def on_destroy(self, event):
         """The program is closing: take its icon out of the tray."""
@@ -619,7 +660,10 @@ class Parton:
         """Start fresh: full health, standing somewhere on the taskbar."""
         lo, hi = self.bounds()
         self.x = random.uniform(lo, hi)           # body center, in screen pixels
-        self.y = 0.0                              # height above the taskbar (jumps)
+        self.y = 0.0                              # height of its feet above the taskbar
+        self.floor = 0.0                          # ...and of what it stands on (or last stood on)
+        self.platform = None                      # the window it stands on (None: the taskbar)
+        self.platform_rect = None                 # ...and where that window was last seen
         self.vx = self.vy = 0.0                   # speed, positive is right / up
         self.facing = random.choice((1, -1))
         self.hits = 0
@@ -709,12 +753,13 @@ class Parton:
     def cursor_in_sight(self, max_range, taskbar=False):
         """Like sees_mouse, but also in calm mode.
 
-        With `taskbar`, a cursor down on the taskbar under it counts too: it can't
-        chase it there, but it notices it (waking up).
+        With `taskbar`, a cursor down on the taskbar under it counts too (or
+        anywhere below the window it stands on): it can't chase it there, but it
+        notices it (waking up). Heights are measured from what it stands on.
         """
         mx, my = mouse_pos()
         _, _, _, bottom = work_area()
-        dx, height = mx - self.x, bottom - my
+        dx, height = mx - self.x, bottom - my - self.floor   # above what it stands on
         low = -float("inf") if taskbar else -5
         if abs(dx) <= max_range and low <= height <= VISION_HEIGHT:
             return dx, height
@@ -723,9 +768,11 @@ class Parton:
     def dummy_in_range(self):
         """True if training is on and the dummy is standing close enough to go and hit it."""
         return (self.app.settings["training"] and self.dummy_standing()
+                and self.platform is None and self.y == 0   # it is down on the taskbar too
                 and abs(self.dummy.center_x() - self.x) <= TRAIN_RANGE)
 
     def dummy_standing(self):
+        """The dummy is standing still down on the taskbar, where it can be trained on."""
         return self.dummy is not None and self.dummy.standing()
 
     def slash_hits_dummy(self):
@@ -758,9 +805,10 @@ class Parton:
             if not self.on_cursor:
                 self.alert.show(self.head_top)
             self.on_cursor = True
-        elif state in ("run", "train", "celebrate", "flee") or (state == "idle" and idle_seconds is None):
+        elif state in ("run", "train", "celebrate", "flee", "climb") or (state == "idle" and idle_seconds is None):
             self.on_cursor = False
-        if state in ("chase", "flee", "run", "jump", "dodge", "evade", "doze", "groggy", "shuffle"):
+        if state in ("chase", "flee", "run", "jump", "dodge", "evade", "doze", "groggy", "shuffle",
+                     "climb", "leap", "falling"):
             self.training = False            # the cursor or a wander interrupts training
         if state in ("idle", "run"):
             self.set_anim(state, restart=True)
@@ -796,6 +844,11 @@ class Parton:
             self.set_anim("idle", restart=True)
         elif state == "shuffle":
             self.start_shuffle()
+        elif state == "climb":
+            self.target = self.takeoff_x(self.climb_to)
+            self.set_anim("run")
+        elif state in ("leap", "falling"):
+            self.set_anim("jump" if self.vy > 0 else "fall", restart=True)
         elif state == "air_attack":
             # It keeps its jump's arc (no stopping dead in the air) and goes
             # straight into the slash.
@@ -804,8 +857,14 @@ class Parton:
                           start=AIR_ATTACK_FIRST_FRAME)
 
     def start_run(self):
-        """Wander: pick a spot far enough along the taskbar and face it."""
+        """Wander: pick a spot far enough along the taskbar and face it. On a
+        window it mostly stays on it (STAY_CHANCE); otherwise it may walk off."""
         lo, hi = self.bounds()
+        if self.platform_rect is not None and random.random() < STAY_CHANCE:
+            left, _, right, _ = self.platform_rect
+            on_lo, on_hi = max(lo, left + self.body_half), min(hi, right - self.body_half)
+            if on_lo < on_hi:
+                lo, hi = on_lo, on_hi
         options = [x for x in (random.uniform(lo, hi) for _ in range(20))
                    if abs(x - self.x) >= MIN_RUN_DISTANCE]
         self.target = options[0] if options else (lo if self.x > (lo + hi) / 2 else hi)
@@ -876,13 +935,14 @@ class Parton:
             return
         self.heal(now)
         self.track_mouse(now)
-        if (self.state == "idle" and not self.pausing and self.y == 0
+        self.ride()
+        if (self.state == "idle" and not self.pausing and self.grounded()
                 and now - max(self.last_mouse_move, self.last_hurt) >= SLEEP_AFTER):
             self.set_state("doze")               # nothing has happened for a while: nap
         if self.state in EVADE_STATES and self.y == 0:
             self.check_incoming_dummy()
 
-        if self.state in ("run", "train") or (self.state == "idle" and not self.pausing):
+        if self.state in ("run", "train", "climb") or (self.state == "idle" and not self.pausing):
             # While calm, keep watch: if it sees the cursor, go after it (or flee).
             if self.sees_mouse(VISION_RANGE) is not None:
                 self.set_state(self.reaction())
@@ -941,6 +1001,10 @@ class Parton:
                 self.set_state("doze")
         elif self.state == "jump":
             self.jump(dt)
+        elif self.state == "climb":
+            self.climb(dt)
+        elif self.state in ("leap", "falling"):
+            self.drop_down(dt)
         elif self.state == "air_attack":
             self.air_attack(dt)
         elif self.state == "held":
@@ -958,8 +1022,12 @@ class Parton:
             # sight, carry on training, or stay idle for a normal while.
             # After a normal idle: sometimes train on the dummy, else wander.
             if not self.pausing:
+                ledge = self.ledge_to_climb() if random.random() < CLIMB_CHANCE else None
                 if self.dummy_in_range() and random.random() < TRAIN_CHANCE:
                     self.set_state("train")
+                elif ledge is not None:
+                    self.climb_to = ledge
+                    self.set_state("climb")
                 else:
                     self.set_state("run")
             elif self.sees_mouse(VISION_RANGE) is not None:
@@ -1016,7 +1084,7 @@ class Parton:
                 self.set_state("idle")
         elif self.state in ("attack", "air_attack"):
             self.celebrate_pending = False
-            if self.y > 0:
+            if not self.grounded():
                 # Air swing finished: keep falling.
                 self.state = "jump"
                 self.set_anim("fall")
@@ -1024,7 +1092,7 @@ class Parton:
                 # Swing finished: short pause and keep watching.
                 self.set_state("idle", idle_seconds=ATTACK_PAUSE)
         elif self.state == "hurt":
-            if self.y > 0:
+            if not self.grounded():
                 self.state, self.vy = "dropped", min(self.vy, 0.0)   # keeps any push
                 self.set_anim("fall")
             elif self.sees_mouse(VISION_RANGE) is not None:
@@ -1105,7 +1173,7 @@ class Parton:
 
     def sleep_now(self):
         """Put to sleep from the menu (on the ground; not while held or flying)."""
-        if not self.alive or self.y > 0 or self.state in ("held", "dropped", "dead"):
+        if not self.alive or not self.grounded() or self.state in ("held", "dropped", "dead"):
             return
         self.set_state("doze")
         # The cursor is right next to it (the menu was opened on it): leaving
@@ -1160,7 +1228,7 @@ class Parton:
     def flee(self, dt):
         """Run away from the cursor (dash if it is very close) until it is out of sight,
         hopping now and then so it is harder to hit."""
-        airborne = self.y > 0
+        airborne = not self.grounded()
         if airborne:
             self.fall(dt, 1.0)               # finish the hop wherever it is going
         seen = self.sees_mouse(LOSE_RANGE)
@@ -1177,7 +1245,7 @@ class Parton:
         close = abs(dx) < FLEE_DASH_DISTANCE
         before = self.x
         self.move_towards(target, DASH_SPEED if close else CHASE_SPEED, dt)
-        if self.y > 0:
+        if not self.grounded():
             self.set_anim("jump" if self.vy > 0 else "fall")
         elif self.x == before:               # cornered: nowhere to go, it just faces it
             self.facing = 1 if dx >= 0 else -1
@@ -1187,9 +1255,9 @@ class Parton:
         # Dodging hops: more often the closer the cursor is.
         far_rate, close_rate = FLEE_JUMPS_PER_SECOND
         rate = close_rate if close else far_rate
-        if self.y == 0 and random.random() < rate * dt:
+        if self.grounded() and random.random() < rate * dt:
             self.vy = (2 * GRAVITY * FLEE_JUMP_HEIGHT) ** 0.5
-            self.y = 0.1                     # off the ground
+            self.y = self.floor + 0.1        # off the ground
 
     def chase(self, dt):
         if self.low_health():                # badly hurt: run away instead
@@ -1232,7 +1300,7 @@ class Parton:
             self.move_towards(target, JUMP_DRIFT, dt)
             self.facing = 1 if dx >= 0 else -1
             # At the top of the jump, swing if the cursor is within the slash.
-            above = height - self.y
+            above = height - (self.y - self.floor)   # the cursor, above its feet
             if (not self.air_swung and self.vy <= 0
                     and TOO_CLOSE <= abs(dx) <= ATTACK_REACH
                     and 0 <= above <= ATTACK_HEIGHT):
@@ -1246,22 +1314,23 @@ class Parton:
         """Swinging in mid-air: it drifts down slowly while it slashes, then
         falls normally (or lands, if it reached the ground first)."""
         self.fall(dt, AIR_ATTACK_GRAVITY)
-        if self.frame_index > AIR_ATTACK_LAST_FRAME or self.y == 0:
+        if self.frame_index > AIR_ATTACK_LAST_FRAME or self.grounded():
             self.celebrate_pending = False
-            if self.y > 0:
+            if not self.grounded():
                 self.state = "jump"
                 self.set_anim("fall")
             else:
                 self.set_state("idle", idle_seconds=ATTACK_PAUSE)
 
     def fall(self, dt, gravity_factor):
-        """Apply gravity; on landing, rest briefly (or finish the swing on the ground)."""
+        """Apply gravity; on landing (on the taskbar or a window), rest briefly
+        (or finish the swing on the ground)."""
+        before = self.y
         self.vy -= GRAVITY * gravity_factor * dt
         self.y += self.vy * dt
-        if self.y <= 0:
-            self.y = self.vy = 0.0
-            if self.state in ("jump", "dropped", "evade"):
-                self.set_state("idle", idle_seconds=JUMP_PAUSE)
+        if self.land(before) and self.state in ("jump", "dropped", "evade", "leap", "falling"):
+            self.vx = 0.0
+            self.set_state("idle", idle_seconds=JUMP_PAUSE)
 
     # --- Clicking: hit, or drag and drop -------------------------------------------
     def press(self, event):
@@ -1276,7 +1345,7 @@ class Parton:
         """Moving the cursor or holding the button turns the click into a grab."""
         _, _, _, bottom = work_area()
         window_pos = (self.x - self.width / 2, bottom - self.ground - self.y)
-        if is_drag(self.pressed, mouse_pos(), window_pos, self.grab_offset, self.y > 0):
+        if is_drag(self.pressed, mouse_pos(), window_pos, self.grab_offset, not self.grounded()):
             self.grab()
 
     def release(self, _event):
@@ -1327,6 +1396,7 @@ class Parton:
         self.grab_offset = (min(max(mx - wx, 0), self.width), min(max(my - wy, 0), self.height))
         self.pressed = None
         self.training = False
+        self.platform = self.platform_rect = None   # lifted off whatever it stood on
         self.state = "held"
         self.vx = self.vy = 0.0
         self.cursor_trail = CursorTrail()
@@ -1358,17 +1428,129 @@ class Parton:
         ceiling = bottom - top - self.ground  # its window can't go above the screen
         before = self.vx
         falling = -self.vy
+        height = self.y
         self.x, self.vx, self.y, self.vy = fly_step(self.x, self.vx, self.y, self.vy,
                                                     dt, lo, hi, ceiling)
         if before * self.vx < 0 and abs(self.vx) > 50:   # bounced: face the new way
             self.facing = 1 if self.vx > 0 else -1
-        if self.y == 0:                      # landed
+        if self.land(height):                # landed (on the taskbar or a window)
             self.vx = 0.0
             self.impact_done = True
             if falling >= FALL_DAMAGE_SPEED:
                 self.hit()                   # a hard landing hurts
             else:
                 self.set_state("idle", idle_seconds=JUMP_PAUSE)
+
+    # --- Standing on windows -----------------------------------------------------------
+    def grounded(self):
+        """Standing on something: the taskbar or the top of a window."""
+        return self.y == self.floor
+
+    @property
+    def ledges(self):
+        """The window tops with room for it to stand on, the highest first."""
+        return self.app.ledges_for(self.body_height)
+
+    def check_footing(self):
+        """After each look at the windows: if the stretch it stands on has gone
+        (covered by a window in front, say), it falls."""
+        if (not self.hidden and not self.gone and not self.away and self.platform is not None
+                and self.grounded()
+                and not platforms.stands_on(self.ledges, self.platform, self.x, self.y)):
+            self.step_off()
+
+    def ride(self):
+        """Standing on a window: move along with it. If it has gone (closed,
+        minimized, maximized) or it no longer is under its feet, it falls."""
+        if self.platform is None or not self.grounded():
+            return
+        rect = platforms.window_rect(self.platform)
+        _, _, _, bottom = work_area()
+        if rect is None or bottom - platforms.top_row(rect) <= 0:
+            self.step_off()
+            return
+        if self.platform_rect is not None:
+            lo, hi = self.bounds()
+            self.x = min(max(self.x + rect[0] - self.platform_rect[0], lo), hi)
+        self.platform_rect = rect
+        self.y = self.floor = bottom - platforms.top_row(rect)
+        if not rect[0] <= self.x <= rect[2]:
+            self.step_off()
+
+    def land(self, before):
+        """After moving from height `before`: if it came down onto something,
+        stand on it. True if it did. Going up, it passes through window tops."""
+        if self.vy > 0:
+            return False
+        spot = platforms.landing(self.ledges, self.x, before, self.y)
+        if spot is None:
+            return False
+        self.y, self.vy = spot[0], 0.0
+        self.floor, self.platform = spot
+        self.platform_rect = platforms.window_rect(self.platform) if self.platform else None
+        return True
+
+    def step_off(self):
+        """The window under its feet is gone: it falls (no harm in it), keeping
+        a little of its stride if it was walking."""
+        self.platform = self.platform_rect = None
+        self.floor = 0.0
+        if self.y <= 0:                      # (only a window down at the taskbar)
+            self.y = 0.0
+            return
+        if self.state in ("hurt", "dead"):
+            return                           # already being carried down (see knocked)
+        walking = self.state in ("run", "chase", "flee", "dodge", "shuffle", "train", "climb")
+        self.vx = self.facing * WALK_OFF_SPEED if walking else 0.0
+        self.vy = 0.0
+        self.set_state("falling")
+
+    def ledge_to_climb(self):
+        """A window top close enough to jump up onto, or None."""
+        options = []
+        for ledge in self.ledges:
+            height, left, right, hwnd = ledge
+            if hwnd == self.platform or not CLIMB_MIN <= height - self.y <= CLIMB_HEIGHT:
+                continue
+            spot = self.takeoff_x(ledge)
+            if abs(spot - self.x) > CLIMB_RANGE:
+                continue
+            if self.platform_rect is not None and not self.platform_rect[0] <= spot <= self.platform_rect[2]:
+                continue                     # it would have to walk off this window first
+            options.append(ledge)
+        return random.choice(options) if options else None
+
+    def takeoff_x(self, ledge):
+        """Where it jumps from to land on `ledge`: under it, as close as it can."""
+        _, left, right, _ = ledge
+        lo, hi = self.bounds()
+        return min(max(self.x, left + self.body_half, lo), right - self.body_half, hi)
+
+    def climb(self, dt):
+        """Run under the window's top and jump up onto it."""
+        same = [l for l in self.ledges if l[3] == self.climb_to[3]]
+        if not same:                         # the window is gone (or covered)
+            self.set_state("idle")
+            return
+        self.climb_to = min(same, key=lambda l: abs(self.takeoff_x(l) - self.x))
+        self.target = self.takeoff_x(self.climb_to)
+        self.move_towards(self.target, RUN_SPEED, dt)
+        if self.x == self.target:
+            rise = self.climb_to[0] - self.y + CLIMB_OVERSHOOT
+            if not 0 < rise <= CLIMB_HEIGHT + CLIMB_OVERSHOOT:
+                self.set_state("idle")       # the window moved out of reach
+                return
+            self.vy = (2 * GRAVITY * rise) ** 0.5
+            self.y += 0.1                    # off the ground
+            self.set_state("leap")
+
+    def drop_down(self, dt):
+        """Leaping up onto a window, or falling off one: on landing, a short rest."""
+        lo, hi = self.bounds()
+        self.x = min(max(self.x + self.vx * dt, lo), hi)
+        self.fall(dt, 1.0)
+        if self.state in ("leap", "falling"):
+            self.set_anim("jump" if self.vy > 0 else "fall")
 
     # --- Interactions with the dummy ------------------------------------------------
     def body_box(self):
@@ -1416,7 +1598,7 @@ class Parton:
         """Pushed by a hit: it flies off sideways with a little hop (see knocked),
         facing whatever hit it."""
         self.vx, self.vy = vx, lift
-        self.y = max(self.y, 0.1)            # off the ground
+        self.y = max(self.y, self.floor + 0.1)   # off the ground
         if abs(vx) >= 1:
             self.facing = -1 if vx > 0 else 1
 
@@ -1457,13 +1639,14 @@ class Parton:
     def knocked(self, dt):
         """Hurt or dead: carried by a push (air drag, gravity, bounces off the
         screen edges) until it lands and stops; without a push it just falls."""
-        if self.vx == 0 and self.y == 0:
+        if self.vx == 0 and self.grounded():
             return
         lo, hi = self.bounds()
         _, top, _, bottom = work_area()
+        height = self.y
         self.x, self.vx, self.y, self.vy = fly_step(self.x, self.vx, self.y, self.vy, dt,
                                                     lo, hi, bottom - top - self.ground)
-        if self.y == 0:
+        if self.land(height):
             self.vx = 0.0                    # lands and stops
 
     def dummy_threat(self, move="stay", delay=0.0):
@@ -1566,18 +1749,18 @@ class Parton:
 
     def celebrate(self, dt):
         """Little hops of joy after breaking the dummy."""
-        if self.y == 0 and self.vy <= 0:
+        if self.grounded() and self.vy <= 0:
             if self.hops_left == 0:
                 self.set_state("idle")
                 return
             self.hops_left -= 1
             self.vy = (2 * GRAVITY * CELEBRATE_HOP_HEIGHT) ** 0.5
-            self.y = 0.1
+            self.y = self.floor + 0.1
         self.vy -= GRAVITY * dt
-        self.y = max(self.y + self.vy * dt, 0.0)
-        if self.y == 0:
+        self.y = max(self.y + self.vy * dt, self.floor)   # hops where it stands
+        if self.grounded():
             self.vy = 0.0
-        self.set_anim("jump" if self.vy > 0 else "fall" if self.y > 0 else "idle")
+        self.set_anim("jump" if self.vy > 0 else "fall" if not self.grounded() else "idle")
 
     def dodge(self, dx):
         """Dash back so the cursor ends up at the axe's distance."""

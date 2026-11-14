@@ -5,7 +5,8 @@
   hits it too. The yellow impact of the hit shows up where it was hit.
 - Hold or drag to pick it up and throw it, like Parton, but it is twice as
   heavy: it flies half as fast and bounces less. Thrown at Parton, it hurts
-  him.
+  him. Like him, it lands on the tops of the open windows, rides along when a
+  window moves, and falls when it goes.
 - On the 14th hit it breaks and disappears; it comes back on its own after
   RESPAWN_SECONDS, or right away with "Revive dummy" in the menu.
 - Right click: the shared menu (see App in parton.py).
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageFilter
 
+import platforms
 import ui
 from physics import CursorTrail, fly_step, is_drag, throw_velocity
 from screen import KEY_COLOR, mouse_pos, solid_mask, to_photo, work_area
@@ -171,13 +173,19 @@ class TrainingDummy:
         self.y = 0.0                            # height above the taskbar
         self.vx = self.vy = 0.0
         self.state = "rest"                     # "rest", "held" or "flying"
+        self.platform = None                    # the window it stands on (None: the taskbar)
+        self.platform_rect = None               # ...and where that window was last seen
         self.impact_done = True                 # only a fresh throw can hit Parton
         self.place()
 
     # --- State seen by Parton and the menu ----------------------------------------
+    def resting(self):
+        """Standing still somewhere (the taskbar or a window), and visible."""
+        return self.alive and not self.hidden and not self.away and self.state == "rest"
+
     def standing(self):
         """Standing still on the taskbar and visible: Parton can train on it."""
-        return self.alive and not self.hidden and not self.away and self.state == "rest"
+        return self.resting() and self.platform is None
 
     def can_be_hit(self):
         return self.alive and not self.hidden and not self.away
@@ -278,6 +286,7 @@ class TrainingDummy:
         self.grab_offset = (min(max(mx - wx, 0), self.width), min(max(my - wy, 0), self.height))
         self.pressed = None
         self.state = "held"
+        self.platform = self.platform_rect = None   # lifted off whatever it stood on
         self.set_cursor("fist")
         self.vx = self.vy = 0.0
         self.trail = CursorTrail()
@@ -329,12 +338,67 @@ class TrainingDummy:
                 self.place()
             elif self.state == "flying":
                 lo, hi, ceiling = self.bounds()
+                before = self.feet()
                 self.x, self.vx, self.y, self.vy = fly_step(
                     self.x, self.vx, self.y, self.vy, dt, lo, hi, ceiling, WEIGHT)
-                if self.y == 0:                     # landed
-                    self.state, self.vx = "rest", 0.0
+                spot = None if self.vy > 0 else platforms.landing(
+                    self.ledges, self.center_x(), before, self.feet())
+                if spot is not None:                # landed (on the taskbar or a window)
+                    self.state, self.vx, self.vy = "rest", 0.0, 0.0
+                    self.platform = spot[1]
+                    self.platform_rect = platforms.window_rect(spot[1]) if spot[1] else None
+                    self.y = spot[0] - self.feet_offset()
                 self.place()
+            elif self.state == "rest":
+                self.ride()
         self.update_hearts()
+
+    # --- Standing on windows -----------------------------------------------------------
+    def feet_offset(self):
+        """How far above its window's bottom edge its body ends (what it stands on)."""
+        return self.height - self.body[3]
+
+    def feet(self):
+        return self.y + self.feet_offset()
+
+    @property
+    def ledges(self):
+        """The window tops with room for it to stand on, the highest first."""
+        return self.app.ledges_for(self.body[3] - self.body[1])
+
+    def ride(self):
+        """Standing on a window: move along with it; if it has gone, or is no
+        longer under it, fall."""
+        if self.platform is None:
+            return
+        rect = platforms.window_rect(self.platform)
+        _, _, _, bottom = work_area()
+        if rect is None or bottom - platforms.top_row(rect) <= 0:
+            self.fall()
+            return
+        if self.platform_rect is not None:
+            lo, hi, _ = self.bounds()
+            self.x = min(max(self.x + rect[0] - self.platform_rect[0], lo), hi)
+        self.platform_rect = rect
+        self.y = bottom - platforms.top_row(rect) - self.feet_offset()
+        self.place()
+        if not rect[0] <= self.center_x() <= rect[2]:
+            self.fall()
+
+    def check_footing(self):
+        """After each look at the windows: if the stretch it stands on has gone
+        (covered by a window in front, say), it falls."""
+        if (not self.hidden and not self.gone and not self.away and self.platform is not None
+                and self.state == "rest"
+                and not platforms.stands_on(self.ledges, self.platform, self.center_x(), self.feet())):
+            self.fall()
+
+    def fall(self):
+        """Off the window it stood on: it drops down."""
+        self.platform = self.platform_rect = None
+        if self.state == "rest":
+            self.state, self.vx, self.vy = "flying", 0.0, 0.0
+            self.impact_done = True             # a fall on its own doesn't hurt anyone
 
     def update_hearts(self):
         """Show its health above its head while the cursor is over its body."""
@@ -364,7 +428,7 @@ class TrainingDummy:
 
     def keep_on_top(self):
         # Re-assert "always on top" and the position (in case the taskbar changes).
-        if self.standing():
+        if self.resting():
             self.hitbox.attributes("-topmost", True)
             self.window.attributes("-topmost", True)
             lo, hi, _ = self.bounds()

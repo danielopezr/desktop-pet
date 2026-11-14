@@ -2,7 +2,7 @@
 
 The tests never touch the real mouse, the real settings or the real cursor
 files: the cursor position is simulated, and settings and cursors go to a
-temporary folder. Tests that run the whole program open its windows for a
+temporary folder. The open windows Parton can stand on are simulated too. Tests that run the whole program open its windows for a
 moment (Parton and the dummy show up on the screen while they run).
 """
 import ctypes
@@ -26,6 +26,7 @@ except (AttributeError, OSError):
 
 import dummy  # noqa: E402
 import parton  # noqa: E402
+import platforms  # noqa: E402
 import ui  # noqa: E402
 
 REAL_FULLSCREEN_CHECK = parton.fullscreen_app_open   # before any test swaps it
@@ -93,7 +94,15 @@ class AppCase(unittest.TestCase):
         self.cursor = [0, 0]
         self.buttons = False                      # a simulated mouse button held down
         self.fullscreen = False
+        # [(hwnd, (left, top, right, bottom))], front first; a third item False
+        # makes one that only covers (a maximized window, say).
+        self.windows = []
         patches = [
+            mock.patch.object(platforms, "window_rects", self.simulated_windows),
+            mock.patch.object(platforms, "window_rect",
+                              lambda hwnd: next((r for h, r, ok in self.simulated_windows()
+                                                 if h == hwnd and ok), None)),
+            mock.patch.object(parton, "CLIMB_CHANCE", 0.0),       # it climbs only when a test says so
             mock.patch.object(parton, "SETTINGS_FILE", Path(self.tmp.name) / "settings.json"),
             mock.patch.object(ui, "CURSOR_DIR", Path(self.tmp.name) / "cursors"),
             mock.patch.object(ui, "_cursors", None),
@@ -121,6 +130,9 @@ class AppCase(unittest.TestCase):
         self.p, self.d = self.app.parton, self.app.dummy
         _, _, _, self.bottom = ui.work_area()
         self.pump(0.2)
+
+    def simulated_windows(self):
+        return [(w[0], w[1], w[2] if len(w) > 2 else True) for w in self.windows]
 
     def close_app(self):
         close_root(self.app.root)

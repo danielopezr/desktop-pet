@@ -53,6 +53,13 @@ your taskbar, hunts your mouse cursor with its axe and trains on a dummy.
   wakes up ("!"), looks around dazed, walks a little way off and goes back to
   sleep there. The pack has no sleeping
   animation, so it uses the slumped frames from the death one.
+- **Walks on your windows**: now and then it runs under a window nearby and
+  jumps up onto its top, and it lands on window tops when it is thrown or
+  falls. Up there it wanders along the window, and rides along when you move
+  it. When the window closes, is minimized or maximized, another window
+  covers the spot, or it walks off the edge, it drops down, unhurt. Only the
+  parts of a window's top that can be seen count: any window in front
+  (maximized ones too) covers the ones behind it.
 - **Celebrates** with a couple of hops when one of its swings breaks the
   dummy.
 - **Shows its health**: put the cursor over Parton and a row of hearts
@@ -70,6 +77,9 @@ The dummy (`dummy.py`) comes up together with Parton, in the same program:
 - **Pick it up and throw it** just like Parton, but it is **twice as heavy**:
   the same flick throws it half as fast, and it bounces less off the edges.
   Unlike Parton, landings don't hurt it.
+- Thrown or dropped over a window, it **stays on top of it**, rides along
+  when you move the window and falls when the window goes. Parton only
+  trains on it when it is down on the taskbar.
 - Put the cursor over it to see its health: seven hearts, two hits each.
 - Your hits and Parton's add up, even while it is in the air: on the 14th it
   **breaks** and disappears, and **comes back** on its own 15 seconds later.
@@ -119,6 +129,8 @@ it; click anywhere else or press Escape to close it:
     in front (a game, a video, a presentation) and come back when it closes.
   - **Training** (on by default): Parton goes and hits the dummy now and then.
   - **Dummy hits back** (on by default): the dummy sometimes hits Parton back.
+  - **Walk on windows** (on by default): Parton climbs onto and walks on the
+    open windows. Off, he stays on the taskbar.
 - **Exit** closes the program.
 
 The settings are saved in `%APPDATA%\Parton\settings.json`, so they are kept
@@ -197,15 +209,18 @@ python -m unittest
 It runs every test in `tests/` (about a minute and a half), with nothing to install:
 
 - `test_physics.py`: throwing, falling, bouncing and the click-or-drag rule.
+- `test_platforms.py`: which parts of the windows' tops Parton can stand on.
 - `test_settings.py`: saving and loading the settings.
 - `test_ui.py`: the menu, hearts, the "!", "?" and "Z", text and cursors.
-- `test_app.py`: Parton and the dummy together (and the tray icon): chasing and calm mode,
+- `test_app.py`: Parton and the dummy together (and the tray icon): walking on
+  windows, chasing and calm mode,
   dozing off and waking up, the
   mid-air swing, dodging and knockback, the dummy hitting back, where the
   impacts land, the hearts, the cursors, the menu and settings, and do not
   disturb.
 
-The tests simulate the cursor (the real mouse is never moved) and use a
+The tests simulate the cursor and the open windows (the real mouse is never
+moved, and your windows are never looked at) and use a
 temporary folder instead of your settings and cursor files. The ones in
 `test_app.py` run the real program, so Parton and the dummy pop up on the
 screen while they run; without the sprites they are skipped.
@@ -257,6 +272,10 @@ The constants at the top of `parton.py` control its behavior:
 | `COUNTER_CHANCE`, `COUNTER_DELAY_MS` | How often the dummy hits back after one of Parton's hits, and how long after |
 | `COUNTER_REACH`, `COUNTER_PUSH`, `COUNTER_LIFT` | How close Parton must still be for it to reach him, and how hard it knocks him back |
 | `FULLSCREEN_CHECK_MS` | How often "do not disturb" looks for a full-screen app |
+| `PLATFORM_SCAN_MS`, `LEDGE_MIN` | How often it looks at where the windows are, and the narrowest stretch of a window's top it stands on |
+| `CLIMB_CHANCE`, `CLIMB_MIN`, `CLIMB_HEIGHT`, `CLIMB_RANGE` | How often it jumps up onto a window when it would wander, and how low, how high and how far away that window's top can be |
+| `CLIMB_OVERSHOOT` | How much higher than the window's top it jumps, to land on it |
+| `STAY_CHANCE`, `WALK_OFF_SPEED` | On a window, how often it wanders along it rather than anywhere (maybe off it), and how fast it goes on as it walks off |
 
 `physics.py` holds what Parton and the dummy share:
 
@@ -283,8 +302,9 @@ and `EMOTE_FADE_FROM` how long they last, how far they float up and when they
 start fading.
 
 `screen.py` holds what all of them share to draw on the screen (the
-transparent color, where the cursor and the taskbar are), and `tray.py` the
-tray icon. `TRAY_SIZES`, `TRAY_HEAD` and `TRAY_OUTLINE` in `parton.py` set how
+transparent color, where the cursor and the taskbar are), `tray.py` the
+tray icon and `platforms.py` where the windows' tops are (and which parts of
+them are covered by windows in front). `TRAY_SIZES`, `TRAY_HEAD` and `TRAY_OUTLINE` in `parton.py` set how
 the icon is drawn: at 16 px only Parton's head fits.
 
 ## Credits

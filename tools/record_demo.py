@@ -30,6 +30,7 @@ from PIL import Image, ImageDraw, ImageTk
 
 import dummy
 import parton
+import platforms
 import ui
 
 random.seed(7)
@@ -41,6 +42,8 @@ ui.CURSOR_DIR = TMP / "cursors"
 if parton.missing_sprites() or not dummy.available():
     sys.exit("The sprites are missing from assets/ (see README.md).")
 parton.fullscreen_app_open = lambda: False
+platforms.window_rects = lambda: []          # a plain backdrop: no windows to stand on
+platforms.window_rect = lambda hwnd: None
 parton.EVADE_CHANCE = 1.0
 parton.COUNTER_CHANCE = 0.0
 parton.TRAIN_CHANCE = 0.0          # it only trains when the script says so

@@ -12,8 +12,11 @@ from unittest import mock
 from tests.support import REAL_FULLSCREEN_CHECK, AppCase, Click, cursor_file, needs_sprites
 import dummy
 import parton
+import platforms
 import tray
 import ui
+
+STAND = platforms.BORDER          # things stand on a window's top border line, this far below its top
 
 tray.user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 tray.user32.IsWindow.argtypes = [wintypes.HWND]
@@ -186,7 +189,10 @@ class Sleeping(AppCase):
                         gap = hy - (w.winfo_rooty() + w.winfo_height())
                         if seen.get(id(z)) != z.start:       # a new Z: where it starts
                             seen[id(z)] = z.start
-                            starts.append((dx, gap))
+                            # On a busy PC it is first seen a little late: take off
+                            # how far it has already risen and drifted by then.
+                            t = (time.perf_counter() - z.start) / z.seconds
+                            starts.append((dx - z.drift * t, gap - z.rise * t))
                         ends.append(dx)
                     time.sleep(0.01)
                 self.assertTrue(both, "a new Z should start before the last one is gone")
@@ -754,6 +760,133 @@ class MenuAndSettings(AppCase):
             self.assertIsNotNone(image.getbbox())
             alphas = set(image.getchannel("A").tobytes())
             self.assertLessEqual(alphas, {0, 255})            # crisp: nothing half see-through
+
+
+@needs_sprites
+class Windows(AppCase):
+    """Standing on the open windows (simulated: see AppCase)."""
+
+    def setUp(self):
+        super().setUp()
+        self.cursor[:] = [0, 0]                        # out of its sight
+        lo, hi = self.p.bounds()
+        self.middle = (lo + hi) / 2
+
+    def add_window(self, hwnd, left, height, right, depth=300, front=False, standable=True):
+        """A window whose top is `height` px above the taskbar; it is seen at the next scan.
+        Things stand on its top border line: STAND below `height`."""
+        top = int(self.bottom - height)
+        entry = (hwnd, (int(left), top, int(right), top + depth), standable)
+        self.windows.insert(0, entry) if front else self.windows.append(entry)
+        self.pump(parton.PLATFORM_SCAN_MS / 1000 + 0.1)
+
+    def move_window(self, hwnd, dx, dy):
+        i = next(i for i, w in enumerate(self.windows) if w[0] == hwnd)
+        left, top, right, bottom = self.windows[i][1]
+        self.windows[i] = (hwnd, (left + dx, top + dy, right + dx, bottom + dy), self.windows[i][2])
+
+    def drop_onto(self, hwnd):
+        """Let Parton go above the middle of the window, and wait until he stands on it."""
+        left, top, right, _ = next(w[1] for w in self.windows if w[0] == hwnd)
+        self.p.x = (left + right) / 2
+        self.p.y, self.p.vx, self.p.vy = self.bottom - top + 60, 0.0, 0.0
+        self.p.state = "dropped"
+        self.assertTrue(self.pump(2.0, until=lambda: self.p.platform == hwnd and self.p.grounded()))
+        self.p.set_state("idle", idle_seconds=100)     # and stays there
+
+    def test_dropped_over_a_window_it_lands_on_top(self):
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.drop_onto(1)
+        self.assertEqual(self.p.y, 300 - STAND)        # its feet on the window's top border line
+        self.assertEqual(self.p.hits, 0)
+
+    def test_it_rides_along_when_the_window_moves(self):
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.drop_onto(1)
+        x = self.p.x
+        self.move_window(1, 80, -40)                   # dragged right and up
+        self.pump(0.1)
+        self.assertAlmostEqual(self.p.x, x + 80)
+        self.assertEqual(self.p.y, 340 - STAND)
+        self.assertEqual(self.p.platform, 1)
+
+    def test_it_falls_unhurt_when_the_window_closes(self):
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.drop_onto(1)
+        self.windows.clear()
+        states = self.watch_states(1.0)
+        self.assertIn("falling", states)
+        self.assertEqual((self.p.y, self.p.platform, self.p.hits), (0, None, 0))
+
+    def test_walking_off_the_edge_it_falls_unhurt(self):
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.drop_onto(1)
+        self.p.set_state("run")
+        self.p.target = self.middle + 400              # past the window's right edge
+        states = self.watch_states(2.0)
+        self.assertIn("falling", states)
+        self.assertEqual((self.p.y, self.p.hits), (0, 0))
+        self.assertGreater(self.p.x, self.middle + 200)   # it kept going a little as it fell
+
+    def test_a_window_in_front_takes_the_ground_from_under_it(self):
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.drop_onto(1)
+        self.add_window(2, self.middle - 100, 400, self.middle + 300, front=True)   # across its spot
+        self.assertTrue(self.pump(1.5, until=lambda: self.p.y == 0))
+        self.assertIsNone(self.p.platform)
+
+    def test_a_maximized_window_in_front_takes_it_too(self):
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.drop_onto(1)
+        self.add_window(2, 0, 2000, 4000, depth=4000, front=True, standable=False)
+        self.assertTrue(self.pump(1.5, until=lambda: self.p.y == 0))
+        self.assertEqual(self.p.ledges, [])
+
+    def test_the_dummy_lands_on_a_window_rides_it_and_falls_when_it_goes(self):
+        d = self.d
+        cx = d.center_x()
+        self.add_window(1, cx - 200, 300, cx + 200)
+        d.y, d.vx, d.vy, d.state, d.impact_done = 360.0, 0.0, 0.0, "flying", True
+        self.assertTrue(self.pump(2.0, until=lambda: d.state == "rest"))
+        self.assertEqual((d.platform, d.feet()), (1, 300 - STAND))
+        self.assertFalse(d.standing())                 # not down where Parton trains on it
+        x = d.x
+        self.move_window(1, 60, -30)
+        self.pump(0.1)
+        self.assertAlmostEqual(d.x, x + 60)
+        self.assertEqual(d.feet(), 330 - STAND)
+        self.windows.clear()
+        self.assertTrue(self.pump(2.0, until=lambda: d.state == "rest" and d.y == 0))
+        self.assertTrue(d.standing())
+        self.assertEqual(d.hits, 0)
+
+    def test_it_jumps_up_onto_a_window_nearby(self):
+        self.add_window(1, self.middle + 100, 250, self.middle + 500)
+        with mock.patch.object(parton, "CLIMB_CHANCE", 1.0):
+            self.p.x = self.middle
+            self.p.set_state("idle")
+            self.p.idle_left = 0.05
+            self.assertTrue(self.pump(3.0, until=lambda: self.p.platform == 1 and self.p.grounded()))
+        self.assertEqual(self.p.y, 250 - STAND)
+
+    def test_a_window_out_of_reach_is_not_climbed(self):
+        self.add_window(1, self.middle - 200, parton.CLIMB_HEIGHT + 100, self.middle + 200)
+        self.assertEqual(len(self.p.ledges), 1)
+        self.assertIsNone(self.p.ledge_to_climb())
+
+    def test_it_sees_the_cursor_from_where_it_stands(self):
+        self.add_window(1, self.middle - 300, 300, self.middle + 300)
+        self.drop_onto(1)
+        self.cursor[:] = [int(self.p.x + 200), int(self.bottom - 300 - 40)]   # just above the window
+        self.assertEqual(self.p.sees_mouse(parton.VISION_RANGE), (200, 40 + STAND))
+
+    def test_not_when_the_setting_is_off(self):
+        self.app.settings["windows"] = False
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.assertEqual(self.p.ledges, [])
+        self.p.x, self.p.y, self.p.state = self.middle, 360, "dropped"
+        self.assertTrue(self.pump(2.0, until=lambda: self.p.grounded()))
+        self.assertEqual((self.p.y, self.p.platform), (0, None))
 
 
 @needs_sprites
