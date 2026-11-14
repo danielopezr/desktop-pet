@@ -16,14 +16,22 @@ together with a training dummy (dummy.py), both in this one program.
 - A quick left click hits it; on the sixth hit it dies and disappears.
 - Now and then, when the dummy is close enough, Parton goes to it and hits it
   a few times.
-- Right click on either of them: menu to revive, hide or show each one, or
-  exit. If neither is left on the screen, the program closes.
+- When the dummy is thrown at it, it usually dodges: it jumps over a dummy
+  coming from the side and dashes away from one falling on it.
+- Right click on either of them: menu to revive, hide or show each one, change
+  the settings (calm mode, do not disturb, training) or exit. If neither is
+  left on the screen, the program closes.
+- Calm mode: it ignores the cursor (no chasing or attacking).
+- Do not disturb: both hide while a full-screen app (a game, a video, a
+  presentation) is in front, and come back when it closes.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
 are ready for later. The sprites are not included in the repository (see
 README.md): put the pack's PNG files in assets/parton/sprites.
 """
 import ctypes
+import json
+import os
 import random
 import time
 import tkinter as tk
@@ -88,6 +96,27 @@ TRAIN_PAUSE = 0.5             # pause between swings, in seconds
 TRAIN_GAP = ATTACK_REACH * 0.8  # distance from the dummy it swings from
 SLASH_FRAMES = {"attack1": (3,), "attack2": (3, 9)}  # frames where the slash lands
 
+# Dodging the dummy when it is thrown at Parton
+EVADE_CHANCE = 0.75           # chance of dodging each throw of the dummy at it
+EVADE_MARGIN = 0.06           # it dodges at the last moment: when waiting this much longer would be too late
+EVADE_LOOKAHEAD = 1.2         # how far ahead it follows the dummy's flight, in seconds
+EVADE_JUMP_HEIGHT = 260       # how high it jumps over the dummy, in pixels
+EVADE_DASH_DISTANCE = 260     # how far it dashes out of the way, in pixels
+KNOCKBACK_FACTOR = 0.6        # share of the dummy's speed that pushes Parton when it hits him
+KNOCKBACK_MAX = 900           # cap on that push, in pixels per second
+KNOCKBACK_LIFT = 450          # the push also pops him up a little (upward speed)
+EVADE_STATES = ("idle", "run", "train", "chase", "flee", "attack", "dodge")  # it can dodge from these
+
+# Menu settings, saved between runs
+SETTINGS_FILE = Path(os.environ.get("APPDATA", Path.home())) / "Parton" / "settings.json"
+DEFAULT_SETTINGS = {
+    "calm": False,            # ignore the cursor: no chasing or attacking it
+    "do_not_disturb": True,   # hide while a full-screen app is in front
+    "training": True,         # go and hit the dummy now and then
+}
+SETTING_LABELS = {"calm": "Calm mode", "do_not_disturb": "Do not disturb", "training": "Training"}
+FULLSCREEN_CHECK_MS = 1000    # how often "do not disturb" looks for a full-screen app
+
 SPRITES = Path(__file__).parent / "assets" / "parton" / "sprites"
 
 # name: (file, milliseconds per frame, loops)
@@ -116,6 +145,59 @@ def mouse_pos():
     pt = wintypes.POINT()
     ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
     return pt.x, pt.y
+
+
+def load_settings():
+    """The saved settings, with the defaults for anything missing or unreadable."""
+    settings = dict(DEFAULT_SETTINGS)
+    try:
+        saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        settings.update({k: v for k, v in saved.items() if k in DEFAULT_SETTINGS})
+    except (OSError, ValueError, AttributeError):
+        pass
+    return settings
+
+
+def save_settings(settings):
+    try:
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    except OSError:
+        pass                                  # not saved: it still works for this run
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+
+def fullscreen_app_open():
+    """True if the window in front covers the whole main screen (a game, a video,
+    a presentation). The desktop, the taskbar and this program's own windows don't count."""
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.MonitorFromWindow.restype = wintypes.HMONITOR
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return False
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if pid.value == os.getpid():
+        return False
+    name = ctypes.create_unicode_buffer(64)
+    user32.GetClassNameW(hwnd, name, 64)
+    if name.value in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+        return False
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    info = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+    user32.GetMonitorInfoW(user32.MonitorFromWindow(hwnd, 2), ctypes.byref(info))  # nearest
+    m = info.rcMonitor
+    on_main_screen = info.dwFlags & 1                 # MONITORINFOF_PRIMARY: where they live
+    return bool(on_main_screen and rect.left <= m.left and rect.top <= m.top
+                and rect.right >= m.right and rect.bottom >= m.bottom)
 
 
 def missing_sprites():
@@ -173,8 +255,11 @@ class App:
         self.root = tk.Tk()
         self.root.withdraw()                      # only the characters' windows show
         self.menu = None                          # the styled menu, while it is open
+        self.settings = load_settings()
+        self.away = False                         # hidden by "do not disturb"
         self.dummy = training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
         self.parton = Parton(self.root, self)
+        self.watch_fullscreen()
 
     def characters(self):
         return [(name, c) for name, c in (("Parton", self.parton), ("dummy", self.dummy)) if c]
@@ -191,6 +276,27 @@ class App:
                 items.append((f"Hide {name}", c.hide))
         return items
 
+    def setting_items(self):
+        """(label, action) that switches each setting on or off."""
+        return [(f"{label}: {'on' if self.settings[key] else 'off'}",
+                 lambda k=key: self.toggle(k))
+                for key, label in SETTING_LABELS.items()]
+
+    def toggle(self, key):
+        self.settings[key] = not self.settings[key]
+        save_settings(self.settings)
+
+    def watch_fullscreen(self):
+        """Do not disturb: hide both while a full-screen app is in front."""
+        away = self.settings["do_not_disturb"] and fullscreen_app_open()
+        if away != self.away:
+            self.away = away
+            if away and self.menu:
+                self.menu.close()
+            for _, c in self.characters():
+                c.set_away(away)
+        self.root.after(FULLSCREEN_CHECK_MS, self.watch_fullscreen)
+
     def show_menu(self, event):
         """Menu built on the spot, so it always matches what is on the screen.
 
@@ -199,13 +305,15 @@ class App:
         if self.menu:
             self.menu.close()
         if ui.available():
-            items = self.menu_items() + [None, ("Exit", self.root.destroy)]
+            items = (self.menu_items() + [None] + self.setting_items()
+                     + [None, ("Exit", self.root.destroy)])
             self.menu = ui.PopupMenu(self.root, items, event.x_root, event.y_root, self.do)
             return
         menu = tk.Menu(self.root, tearoff=0)
-        for label, action in self.menu_items():
-            menu.add_command(label=label, command=lambda a=action: self.do(a))
-        menu.add_separator()
+        for section in (self.menu_items(), self.setting_items()):
+            for label, action in section:
+                menu.add_command(label=label, command=lambda a=action: self.do(a))
+            menu.add_separator()
         menu.add_command(label="Exit", command=self.root.destroy)
         menu.tk_popup(event.x_root, event.y_root)
 
@@ -264,6 +372,9 @@ class Parton:
         self.label.bind("<ButtonRelease-1>", self.release)
         self.pressed = None                       # (time, x, y) of a left click in progress
         self.dummy = app.dummy                    # None if the dummy's sprites are missing
+        self.away = False                         # hidden by "do not disturb"
+        self.evade_roll = 0                       # the last dummy throw it decided to dodge or not
+        self.evade_planned = False                # ...and whether it will dodge that one
         self.hearts = ui.Hearts(master)         # shown while the cursor is over it
         self.shown = None
         self.anim = None
@@ -303,11 +414,30 @@ class Parton:
 
     def unhide(self):
         self.hidden = False
-        self.root.deiconify()
+        self.show_window()
 
     def revive(self):
         self.spawn()
-        self.root.deiconify()
+        self.show_window()
+
+    def show_window(self):
+        """Put it back on the screen, unless "do not disturb" is keeping it away."""
+        if not self.away:
+            self.root.deiconify()
+
+    def set_away(self, away):
+        """Hide it while a full-screen app is open ("do not disturb"), and bring it back."""
+        if away == self.away:
+            return
+        self.away = away
+        if away:
+            if self.state == "held":             # dropped if it was being held
+                self.state, self.vx, self.vy = "dropped", 0.0, 0.0
+            self.pressed = None
+            self.root.withdraw()
+            self.hearts.hide()
+        elif not self.hidden and not self.gone:
+            self.root.deiconify()
 
     def vanish(self):
         """After dying and lying there a moment, it disappears until revived."""
@@ -324,7 +454,12 @@ class Parton:
         return left + self.body_half, right - self.body_half
 
     def sees_mouse(self, max_range):
-        """(horizontal distance, height above the taskbar) of the cursor if seen, else None."""
+        """(horizontal distance, height above the taskbar) of the cursor if seen, else None.
+
+        In calm mode it never sees it, so it doesn't chase or attack it.
+        """
+        if self.app.settings["calm"]:
+            return None
         mx, my = mouse_pos()
         _, _, _, bottom = work_area()
         dx, height = mx - self.x, bottom - my
@@ -333,8 +468,9 @@ class Parton:
         return None
 
     def dummy_in_range(self):
-        """True if the dummy is standing and close enough to go and train on it."""
-        return self.dummy_standing() and abs(self.dummy.center_x() - self.x) <= TRAIN_RANGE
+        """True if training is on and the dummy is standing close enough to go and hit it."""
+        return (self.app.settings["training"] and self.dummy_standing()
+                and abs(self.dummy.center_x() - self.x) <= TRAIN_RANGE)
 
     def dummy_standing(self):
         return self.dummy is not None and self.dummy.standing()
@@ -356,7 +492,7 @@ class Parton:
     # --- States ----------------------------------------------------------------
     def set_state(self, state, idle_seconds=None, target="cursor"):
         self.state = state
-        if state in ("chase", "flee", "run", "jump", "dodge"):
+        if state in ("chase", "flee", "run", "jump", "dodge", "evade"):
             self.training = False            # the cursor or a wander interrupts training
         if state in ("idle", "run"):
             self.set_anim(state, restart=True)
@@ -420,11 +556,13 @@ class Parton:
     def tick(self):
         now = time.perf_counter()
         dt, self.last = min(now - self.last, 0.1), now
-        if self.hidden or self.gone:             # off the screen: nothing to do
+        if self.hidden or self.gone or self.away:   # off the screen: nothing to do
             self.hearts.hide()
             self.root.after(TICK_MS, self.tick)
             return
         self.heal(now)
+        if self.state in EVADE_STATES and self.y == 0:
+            self.check_incoming_dummy()
 
         if self.state in ("run", "train") or (self.state == "idle" and not self.pausing):
             # While calm, keep watch: if it sees the cursor, go after it (or flee).
@@ -475,6 +613,8 @@ class Parton:
             self.flee(dt)
         elif self.state == "celebrate":
             self.celebrate(dt)
+        elif self.state == "evade":
+            self.evade_step(dt)
         elif self.state == "jump":
             self.jump(dt)
         elif self.state == "air_attack":
@@ -485,7 +625,7 @@ class Parton:
         elif self.state == "dropped":
             self.fly(dt)
         elif self.state in ("hurt", "dead"):
-            self.fall(dt, 1.0)               # if hit in the air, it falls meanwhile
+            self.knocked(dt)                 # pushed by a hit, or falling if hit in the air
 
         if self.pressed and self.state != "held":
             self.check_drag_start()
@@ -525,7 +665,7 @@ class Parton:
                     self.set_state("idle", idle_seconds=ATTACK_PAUSE)
             elif self.state == "hurt":
                 if self.y > 0:
-                    self.state, self.vx, self.vy = "dropped", 0.0, min(self.vy, 0.0)
+                    self.state, self.vy = "dropped", min(self.vy, 0.0)   # keeps any push
                     self.set_anim("fall")
                 elif self.sees_mouse(VISION_RANGE) is not None:
                     self.set_state(self.reaction())  # strike back (or flee) right away
@@ -665,7 +805,7 @@ class Parton:
         self.y += self.vy * dt
         if self.y <= 0:
             self.y = self.vy = 0.0
-            if self.state in ("jump", "dropped"):
+            if self.state in ("jump", "dropped", "evade"):
                 self.set_state("idle", idle_seconds=JUMP_PAUSE)
 
     # --- Clicking: hit, or drag and drop -------------------------------------------
@@ -801,8 +941,133 @@ class Parton:
                 and self.impact_speed(d.vx, d.vy, d_low, self.y + self.body_height,
                                       max(dt, 0.016)) >= IMPACT_SPEED):
             d.impact_done = True
+            push = self.knockback_speed(d)
             d.vx = -d.vx * IMPACT_BOUNCE
-            self.hit()                       # the dummy landed on Parton
+            self.hit()                       # the dummy landed on Parton...
+            self.vx, self.vy = push, KNOCKBACK_LIFT   # ...and pushes him away
+            self.y = max(self.y, 0.1)        # off the ground
+            if abs(push) >= 1:
+                self.facing = -1 if push > 0 else 1   # facing the dummy that hit him
+
+    def knockback_speed(self, d):
+        """Sideways speed the dummy's hit gives Parton: in the direction the dummy
+        was flying, or away from it if it fell on him from above."""
+        speed = min(d.speed() * KNOCKBACK_FACTOR, KNOCKBACK_MAX)
+        if abs(d.vx) >= 50:
+            direction = 1 if d.vx > 0 else -1
+        else:
+            direction = 1 if self.x >= d.center_x() else -1
+        return direction * speed
+
+    def knocked(self, dt):
+        """Hurt or dead: carried by a push (air drag, gravity, bounces off the
+        screen edges) until it lands and stops; without a push it just falls."""
+        if self.vx == 0 and self.y == 0:
+            return
+        lo, hi = self.bounds()
+        _, top, _, bottom = work_area()
+        self.x, self.vx, self.y, self.vy = fly_step(self.x, self.vx, self.y, self.vy, dt,
+                                                    lo, hi, bottom - top - self.ground)
+        if self.y == 0:
+            self.vx = 0.0                    # lands and stops
+
+    def dummy_threat(self, move="stay", delay=0.0):
+        """Whether the thrown dummy would hit it hard if it did `move` after `delay` seconds.
+
+        Follows the dummy's flight ahead of time with the same physics as the
+        real throw, together with its own motion: it stands still for `delay`
+        seconds and then does `move`, "stay", "jump" or "dash" (see evade).
+        Returns (seconds until the hit, "side" or "above"), or None if the
+        dummy misses, falls short or is too slow to hurt.
+        """
+        d = self.dummy
+        lo, hi, ceiling = d.bounds()
+        x, vx, y, vy = d.x, d.vx, d.y, d.vy
+        px, py, pvy = self.x, 0.0, 0.0
+        target = self.dash_target() if move == "dash" else px
+        started = False
+        step = 1 / 60
+        for i in range(1, round(EVADE_LOOKAHEAD / step) + 1):
+            was_over = px + self.body_half >= x + d.body[0] and px - self.body_half <= x + d.body[2]
+            x, vx, y, vy = fly_step(x, vx, y, vy, step, lo, hi, ceiling, training_dummy.WEIGHT)
+            if i * step <= delay:
+                pass                             # still waiting
+            elif move == "jump":
+                if not started:
+                    started, pvy = True, (2 * GRAVITY * EVADE_JUMP_HEIGHT) ** 0.5
+                pvy -= GRAVITY * step
+                py = max(py + pvy * step, 0.0)
+            elif move == "dash":
+                px += max(-DASH_SPEED * step, min(DASH_SPEED * step, target - px))
+            low, high = y + d.height - d.body[3], y + d.height - d.body[1]
+            top = py + self.body_height
+            if (px + self.body_half >= x + d.body[0] and px - self.body_half <= x + d.body[2]
+                    and high >= py and low <= top):
+                if self.impact_speed(vx, vy, low, top, step) < IMPACT_SPEED:
+                    return None                  # a gentle bump: nothing to fear
+                return i * step, "above" if was_over else "side"
+            if y == 0:
+                return None                      # it lands without reaching it
+        return None
+
+    def dash_target(self):
+        """Where to dash to get out of the dummy's way: away from it, or the other
+        way if there is no room."""
+        lo, hi = self.bounds()
+        away = 1 if self.x >= self.dummy.center_x() else -1
+        target = min(max(self.x + away * EVADE_DASH_DISTANCE, lo), hi)
+        if abs(target - self.x) < EVADE_DASH_DISTANCE / 2:
+            target = min(max(self.x - away * EVADE_DASH_DISTANCE, lo), hi)
+        return target
+
+    def check_incoming_dummy(self):
+        """When the thrown dummy is going to hit it, maybe dodge, at the last moment.
+
+        On each throw it decides once whether it will dodge (EVADE_CHANCE). If it
+        will, it waits: it only moves when waiting a bit longer (EVADE_MARGIN)
+        would no longer get it clear. It jumps or dashes, whichever still works;
+        if neither does, it takes the hit.
+        """
+        d = self.dummy
+        if d is None or d.state != "flying" or d.impact_done or not d.can_be_hit():
+            return
+        threat = self.dummy_threat()
+        if threat is None:
+            return
+        if self.evade_roll != d.throws:          # a new throw: dodge this one or not?
+            self.evade_roll = d.throws
+            self.evade_planned = random.random() < EVADE_CHANCE
+        if not self.evade_planned:
+            return
+        moves = ("dash", "jump") if threat[1] == "above" else ("jump", "dash")
+        for move in moves:
+            if self.dummy_threat(move) is None:  # this still gets it clear...
+                if self.dummy_threat(move, delay=EVADE_MARGIN) is not None:
+                    self.evade(move)             # ...but not if it waited: now
+                return                           # otherwise keep waiting
+
+    def evade(self, move):
+        """Jump over the dummy, or dash out of its way."""
+        self.set_state("evade")
+        self.face_dummy()
+        self.evade_jump = move == "jump"
+        if self.evade_jump:
+            self.vy = (2 * GRAVITY * EVADE_JUMP_HEIGHT) ** 0.5
+            self.y = 0.1                         # off the ground
+            self.set_anim("jump", restart=True)
+        else:
+            self.target = self.dash_target()
+            self.set_anim("dash", restart=True)
+
+    def evade_step(self, dt):
+        if self.evade_jump:
+            self.fall(dt, 1.0)                   # lands into a short rest
+            if self.state == "evade":
+                self.set_anim("jump" if self.vy > 0 else "fall")
+        else:
+            self.move_towards(self.target, DASH_SPEED, dt)
+            if self.x == self.target:
+                self.set_state("idle", idle_seconds=JUMP_PAUSE)
 
     def celebrate(self, dt):
         """Little hops of joy after breaking the dummy."""

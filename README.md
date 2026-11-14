@@ -53,21 +53,34 @@ The dummy (`dummy.py`) comes up together with Parton, in the same program:
 
 - Throw Parton hard at the dummy and the dummy takes a hit (Parton bounces
   off it).
-- Throw the dummy hard at Parton, or drop it on him, and Parton takes a hit.
+- Throw the dummy hard at Parton, or drop it on him, and Parton takes a hit...
+  unless he dodges: three times out of four he waits until the last moment
+  and then **jumps over it** or **dashes out of the way**, whichever gets him
+  clear. If it comes too close and too fast for either, he takes the hit.
+- A dummy that hits Parton also **knocks him back**: he is pushed the way it
+  was flying (or away from it, if it fell on him) with a little hop.
 - A gentle toss doesn't hurt: from the side only the sideways speed counts,
   and falling on top of the other one, the whole speed. One hit per throw.
 
 ### The menu
 
 Right click on Parton or on the dummy to open a small menu of pixel-art
-buttons (or the plain Windows menu if the UI pieces are
-missing). Click an option to pick it; click anywhere else or press Escape to
-close it:
+buttons (or the plain Windows menu if the font is missing). Click an option
+to pick it; click anywhere else or press Escape to close it:
 
 - **Revive** a character that has died (the dummy without waiting).
 - **Hide** or **show** each one, to have only one of them on the screen. A
   hidden dummy doesn't come back on its own.
+- **Settings**, each one switched on or off with a click:
+  - **Calm mode** (off by default): Parton ignores the cursor, so he no
+    longer chases or attacks it. You can still hit him.
+  - **Do not disturb** (on by default): both hide while a full-screen app is
+    in front (a game, a video, a presentation) and come back when it closes.
+  - **Training** (on by default): Parton goes and hits the dummy now and then.
 - **Exit** closes the program.
+
+The settings are saved in `%APPDATA%\Parton\settings.json`, so they are kept
+the next time it runs.
 
 If neither of them is left on the screen (both dead or hidden) and the dummy
 isn't about to come back, there is nothing left to right-click, so the
@@ -158,6 +171,10 @@ The constants at the top of `parton.py` control its behavior:
 | `CELEBRATE_HOPS`, `CELEBRATE_HOP_HEIGHT` | How many hops it does after breaking the dummy, and how high |
 | `TRAIN_CHANCE`, `TRAIN_RANGE` | How often it goes to train on the dummy, and from how far |
 | `TRAIN_SWINGS`, `TRAIN_PAUSE` | How many swings per training session, and the pause between them |
+| `EVADE_CHANCE`, `EVADE_MARGIN` | How often it dodges a thrown dummy (the rest of the time it takes the hit), and how close to the last moment it waits before dodging |
+| `EVADE_JUMP_HEIGHT`, `EVADE_DASH_DISTANCE` | How high it jumps and how far it dashes to dodge |
+| `KNOCKBACK_FACTOR`, `KNOCKBACK_MAX`, `KNOCKBACK_LIFT` | How hard a hit from the dummy pushes Parton (share of its speed, cap) and how much it pops him up |
+| `FULLSCREEN_CHECK_MS` | How often "do not disturb" looks for a full-screen app |
 
 `physics.py` holds what Parton and the dummy share:
 

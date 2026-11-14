@@ -196,6 +196,8 @@ class TrainingDummy:
         self.alive = True       # standing (not broken)
         self.gone = False       # broken and already gone from the screen
         self.hidden = False     # hidden from the menu
+        self.away = False       # hidden for a while by "do not disturb"
+        self.throws = 0         # how many times it has been thrown (Parton dodges per throw)
         self.anim_job = None
         self.respawn_job = None # pending automatic comeback after breaking
         self.pressed = None     # (time, x, y) of a left click in progress
@@ -220,10 +222,10 @@ class TrainingDummy:
     # --- State seen by Parton and the menu ----------------------------------------
     def standing(self):
         """Standing still on the taskbar and visible: Parton can train on it."""
-        return self.alive and not self.hidden and self.state == "rest"
+        return self.alive and not self.hidden and not self.away and self.state == "rest"
 
     def can_be_hit(self):
-        return self.alive and not self.hidden
+        return self.alive and not self.hidden and not self.away
 
     def on_screen(self):
         """Something of it is on the screen (standing, or breaking)."""
@@ -255,10 +257,29 @@ class TrainingDummy:
 
     def unhide(self):
         self.hidden = False
+        self.show_windows()
+
+    def show_windows(self):
+        """Put it back on the screen, unless "do not disturb" is keeping it away."""
+        if self.away:
+            return
         self.window.deiconify()
         if self.alive:
             self.hitbox.deiconify()
         self.place()
+
+    def set_away(self, away):
+        """Hide it while a full-screen app is open ("do not disturb"), and bring it back."""
+        if away == self.away:
+            return
+        self.away = away
+        if away:
+            self.let_go()
+            self.window.withdraw()
+            self.hitbox.withdraw()
+            self.hearts.hide()
+        elif not self.hidden and not self.gone:
+            self.show_windows()
 
     def revive(self):
         self.cancel_respawn()
@@ -267,9 +288,8 @@ class TrainingDummy:
         self.alive, self.gone, self.hidden = True, False, False
         self.pressed = None
         self.show_frame(self.idle[0])
-        self.window.deiconify()
-        self.hitbox.deiconify()
         self.reset_position()
+        self.show_windows()
 
     # --- Clicking: hit, or drag and throw (same as Parton) ---------------------------
     def window_pos(self):
@@ -287,6 +307,7 @@ class TrainingDummy:
         """Quick click: a hit. After a grab: a throw."""
         if self.state == "held":
             self.state = "flying"
+            self.throws += 1
             vx, vy = self.trail.speed()
             self.vx, self.vy = throw_velocity(vx, vy, WEIGHT)
         elif self.pressed:
@@ -316,7 +337,7 @@ class TrainingDummy:
         return left - self.body[0], right - self.body[2], bottom - top - self.height
 
     def tick(self):
-        if not self.hidden and not self.gone:
+        if not self.hidden and not self.gone and not self.away:
             if self.pressed and self.state != "held":
                 if is_drag(self.pressed, mouse_pos(), self.window_pos(),
                            self.grab_offset, self.y > 0):
