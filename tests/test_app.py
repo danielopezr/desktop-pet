@@ -892,9 +892,138 @@ class Windows(AppCase):
         self.app.settings["windows"] = False
         self.add_window(1, self.middle - 200, 300, self.middle + 200)
         self.assertEqual(self.p.ledges, [])
+        self.assertEqual(self.app.walls, [])           # nor their sides as walls
         self.p.x, self.p.y, self.p.state = self.middle, 360, "dropped"
         self.assertTrue(self.pump(2.0, until=lambda: self.p.grounded()))
         self.assertEqual((self.p.y, self.p.platform), (0, None))
+
+    # --- Parkour: walls, corners and gaps -------------------------------------------
+    def throw(self, x, y, vx):
+        self.p.x, self.p.y, self.p.vx, self.p.vy = x, y, vx, 0.0
+        self.p.state, self.p.impact_done = "dropped", True
+
+    def climb_now(self, **chances):
+        """Make it go up onto a window right away, the way the chances say."""
+        self.p.set_state("idle")
+        self.p.idle_left = 0.05
+        patches = [mock.patch.object(capu, "CLIMB_CHANCE", 1.0)]
+        patches += [mock.patch.object(capu, name, value) for name, value in chances.items()]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_thrown_softly_at_the_screen_edge_it_slides_down_and_jumps_off(self):
+        lo, hi = self.p.bounds()
+        self.throw(hi - 150, 400, 500)
+        states = self.watch_states(2.5)
+        self.assertIn("wall_slide", states)
+        self.assertIn("wall_jump", states)
+        self.assertTrue(self.p.grounded())
+        self.assertLess(self.p.x, hi - 50)             # jumped back into the screen
+        self.assertEqual(self.p.hits, 0)
+
+    def test_thrown_hard_at_the_screen_edge_it_bounces_off(self):
+        lo, hi = self.p.bounds()
+        self.throw(hi - 30, 200, 1500)
+        states = self.watch_states(1.5)
+        self.assertNotIn("wall_slide", states)
+        self.assertEqual(self.p.facing, -1)            # bounced back
+
+    def test_thrown_softly_at_a_windows_side_it_slides_down_it(self):
+        self.add_window(1, self.middle + 200, 500, self.middle + 600, depth=500)
+        self.throw(self.middle, 450, 500)
+        self.assertTrue(self.pump(1.0, until=lambda: self.p.state == "wall_slide"))
+        self.assertAlmostEqual(self.p.x, self.middle + 200 - self.p.body_half)   # its back on the side
+        self.assertEqual(self.p.facing, -1)            # back to the wall, facing away from it
+
+    def test_thrown_hard_at_a_windows_side_it_bounces_off_it(self):
+        self.add_window(1, self.middle + 200, 500, self.middle + 600, depth=500)
+        self.throw(self.middle, 300, 1500)
+        states = self.watch_states(1.5)
+        self.assertNotIn("wall_slide", states)
+        self.assertEqual(self.p.facing, -1)            # bounced back...
+        self.assertLess(self.p.x, self.middle + 200)   # ...without going past the side
+
+    def test_it_climbs_onto_a_window_by_its_corner(self):
+        self.add_window(1, self.middle + 100, 250, self.middle + 500)
+        self.p.x = self.middle
+        self.climb_now(CORNER_CHANCE=1.0, PARKOUR_CHANCE=0.0)
+        states = []
+        def up():
+            if not states or states[-1] != self.p.state:
+                states.append(self.p.state)
+            return self.p.platform == 1 and self.p.state == "idle"
+        self.assertTrue(self.pump(4.0, until=up))
+        self.assertIn("ledge_hang", states)
+        self.assertIn("ledge_climb", states)
+        self.assertEqual(self.p.y, 250 - STAND)
+        self.assertGreater(self.p.x, self.middle + 100)   # up on the window, by its left corner
+
+    def test_hanging_from_a_corner_a_hit_drops_it_from_where_it_hangs(self):
+        self.add_window(1, self.middle + 100, 250, self.middle + 500)
+        self.p.x = self.middle
+        self.climb_now(CORNER_CHANCE=1.0, PARKOUR_CHANCE=0.0)
+        self.assertTrue(self.pump(3.0, until=lambda: self.p.state == "ledge_hang"))
+        hanging = self.p.body_box()
+        self.cursor[:] = [int(self.p.x), int(self.bottom - 300)]
+        self.p.hit()
+        self.assertIsNone(self.p.platform)
+        self.assertAlmostEqual(self.p.y, hanging[2])   # from its body, below the window's top
+        self.assertTrue(self.pump(2.0, until=lambda: self.p.grounded()))
+        self.assertEqual(self.p.y, 0)
+
+    def test_it_goes_up_a_gap_wall_to_wall(self):
+        # Two tall windows with a gap between them; their tops are out of reach of one jump.
+        self.add_window(1, self.middle + 100, 650, self.middle + 500, depth=650)
+        self.add_window(2, self.middle - 500, 680, self.middle - 100, depth=680)
+        self.p.x = self.middle
+        self.climb_now(PARKOUR_CHANCE=1.0)
+        states = []
+        def up():
+            if not states or states[-1] != self.p.state:
+                states.append(self.p.state)
+            return self.p.platform in (1, 2) and self.p.state == "idle"
+        self.assertTrue(self.pump(7.0, until=up), states)
+        self.assertIn("wall_jump", states)
+        self.assertGreater(self.p.y, capu.CLIMB_HEIGHT)
+        self.assertEqual(self.p.hits, 0)
+
+    def test_a_window_too_high_without_a_gap_is_not_climbed(self):
+        self.add_window(1, self.middle - 200, capu.CLIMB_HEIGHT + 200, self.middle + 200,
+                        depth=capu.CLIMB_HEIGHT + 200)
+        self.assertIsNone(self.p.ledge_to_climb())
+
+    def test_breaking_the_dummy_it_strikes_its_victory_pose(self):
+        self.p.set_state("celebrate")
+        self.assertEqual(self.p.anim, "celebrate")
+        self.assertTrue(self.pump(2.5, until=lambda: self.p.state == "idle"))
+        self.assertTrue(self.p.grounded())
+
+
+@needs_sprites
+class WithoutCapusOwnSprites(AppCase):
+    """With only the pack's sprites (none of Capu's own: walls, corners, cheer) it
+    behaves as before."""
+
+    def setUp(self):
+        available = capu.available
+        p = mock.patch.object(capu, "available",
+                              lambda name: name not in capu.OPTIONAL and available(name))
+        p.start()
+        self.addCleanup(p.stop)
+        super().setUp()
+
+    def test_it_bounces_off_the_screen_edge(self):
+        lo, hi = self.p.bounds()
+        self.p.x, self.p.y, self.p.vx, self.p.vy = hi - 150, 400, 500, 0.0   # softly: it would grab it
+        self.p.state, self.p.impact_done = "dropped", True
+        self.assertNotIn("wall_slide", self.watch_states(1.5))
+        self.assertNotIn("wall_slide", self.p.frames)
+
+    def test_it_celebrates_with_hops(self):
+        self.p.set_state("celebrate")
+        self.assertNotEqual(self.p.anim, "celebrate")
+        self.assertTrue(self.pump(3.0, until=lambda: self.p.state == "idle"))
 
 
 @needs_sprites

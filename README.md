@@ -6,7 +6,7 @@ A small desktop pet for Windows, written in Python with Tkinter. Capu lives on
 your taskbar, hunts your mouse cursor with the lantern it carries on its staff
 and trains on a dummy.
 
-![Capu chasing the cursor, the dummy being hit and thrown, Capu dodging it and getting hit back](docs/demo.gif)
+![Capu chasing the cursor, the dummy being hit and thrown, Capu dodging it and getting hit back, breaking the dummy and celebrating, sliding down a window's side, climbing a window by its corner and going up a gap between two windows wall to wall](docs/demo.gif)
 
 *Recorded from the program itself, with a simulated cursor
 (`tools/record_demo.py`). Dummy art by Mattz Art.*
@@ -34,6 +34,11 @@ and trains on a dummy.
   anywhere: it falls back down to the taskbar. Let go while moving the mouse
   and it is **thrown** that way, as fast as you were moving, bouncing off the
   screen edges. A **hard landing** hurts it.
+- **Grabs the walls**: thrown softly at a screen edge or at the side of a
+  window (or reaching it after the air has slowed it down), it holds on to it
+  with its back to it and **slides down**, then **jumps off** it back into the
+  screen (or lands, or drops off where the window ends). Thrown hard, it
+  bounces off it.
 - **Hit it** with a quick left click: it flinches and turns to face you. On
   the sixth hit it **dies** and disappears.
 - **Heals** over time: after a few seconds without being hit, it recovers
@@ -56,15 +61,20 @@ and trains on a dummy.
   wakes up ("!"), looks around dazed, walks a little way off and goes back to
   sleep there. The pack has no sleeping
   animation, so it uses the slumped frames from the death one.
-- **Walks on your windows**: now and then it runs under a window nearby and
-  jumps up onto its top, and it lands on window tops when it is thrown or
+- **Walks on your windows**: now and then it goes up onto a window nearby,
+  in one of three ways: it jumps straight onto its top; it jumps to one of its
+  corners, **hangs** from it and **pulls itself up**; or, when there is a gap
+  between that window's side and another wall (the screen's edge or another
+  window), it goes **up the gap wall to wall**, parkour style, even to windows
+  too high for one jump. It lands on window tops when it is thrown or
   falls. Up there it wanders along the window, and rides along when you move
   it. When the window closes, is minimized or maximized, another window
   covers the spot, or it walks off the edge, it drops down, unhurt. Only the
   parts of a window's top that can be seen count: any window in front
   (maximized ones too) covers the ones behind it.
-- **Celebrates** with a couple of hops when one of its swings breaks the
-  dummy.
+- **Celebrates** when one of its swings breaks the dummy: it jumps
+  twirling its staff, lands and holds the lantern up like a trophy, beaming,
+  among sparkles.
 - **Shows its health**: put the cursor over Capu and a row of hearts
   appears above its head. It has three, and each heart is two hits: the first
   turns it into a half heart, the second empties it.
@@ -173,13 +183,20 @@ assets/
 │   └── sprites/
 │       ├── Attack 1.png
 │       ├── Attack 2.png
+│       ├── Celebrate.png  (optional)
 │       ├── Dash.png
 │       ├── Death.png
+│       ├── Doze.png       (optional)
 │       ├── Fall.png
 │       ├── Hurt.png
 │       ├── Idle.png
 │       ├── Jump.png
-│       └── Run.png
+│       ├── Ledge Climb.png (optional)
+│       ├── Ledge Grab.png (optional)
+│       ├── Run.png
+│       ├── Sleep.png      (optional)
+│       ├── Wall Jump.png  (optional)
+│       └── Wall Slide.png (optional)
 ├── dummy/
 │   └── sprites/
 │       ├── BREAKING.png
@@ -190,7 +207,11 @@ assets/
 ```
 
 If any of Capu's sprites is missing, it shows a message listing the missing
-files. Without the dummy's sprites, Capu runs alone. Without the font, the menu
+files. `Doze.png` and `Sleep.png` (dozing off and sleeping) aren't in the pack:
+without them, those come from the frames of `Death.png` where it slumps with
+its eyes closed. The wall, corner and celebration sheets come only with
+Capu's own sprites: without them it bounces off the walls, only jumps
+straight onto windows and celebrates with a few hops. Without the dummy's sprites, Capu runs alone. Without the font, the menu
 is the plain Windows one. The hearts and the cursors are drawn by the program
 itself, so they need no files.
 
@@ -212,7 +233,7 @@ python -m unittest
 It runs every test in `tests/` (about a minute and a half), with nothing to install:
 
 - `test_physics.py`: throwing, falling, bouncing and the click-or-drag rule.
-- `test_platforms.py`: which parts of the windows' tops Capu can stand on.
+- `test_platforms.py`: which parts of the windows' tops Capu can stand on, and which parts of their sides are walls.
 - `test_settings.py`: saving and loading the settings.
 - `test_ui.py`: the menu, hearts, the "!", "?" and "Z", text and cursors.
 - `test_app.py`: Capu and the dummy together (and the tray icon): walking on
@@ -270,7 +291,7 @@ The constants at the top of `capu.py` control its behavior:
 | `NUDGE_SECONDS`, `SHUFFLE_DISTANCE`, `SHUFFLE_SPEED` | Calm mode: how long the cursor must rub it asleep before it gets up, and how far and how fast it walks off |
 | `GROGGY_LOOKS`, `GROGGY_LOOK_SECONDS` | How many times it looks around, dazed, before walking off, and how long each look lasts |
 | `Z_EVERY`, `Z_SECONDS`, `Z_RISE`, `Z_DRIFT` | How often a "Z" starts floating up while it sleeps, how long each lasts, and how far it rises and drifts sideways |
-| `CELEBRATE_HOPS`, `CELEBRATE_HOP_HEIGHT` | How many hops it does after breaking the dummy, and how high |
+| `CELEBRATE_HOPS`, `CELEBRATE_HOP_HEIGHT` | Without the celebration sheet: how many hops it does after breaking the dummy, and how high |
 | `TRAIN_CHANCE`, `TRAIN_RANGE` | How often it goes to train on the dummy, and from how far |
 | `TRAIN_SWINGS`, `TRAIN_PAUSE` | How many swings per training session, and the pause between them |
 | `EVADE_CHANCE`, `EVADE_MARGIN` | How often it dodges a thrown dummy (the rest of the time it takes the hit), and how close to the last moment it waits before dodging |
@@ -283,6 +304,9 @@ The constants at the top of `capu.py` control its behavior:
 | `CLIMB_CHANCE`, `CLIMB_MIN`, `CLIMB_HEIGHT`, `CLIMB_RANGE` | How often it jumps up onto a window when it would wander, and how low, how high and how far away that window's top can be |
 | `CLIMB_OVERSHOOT` | How much higher than the window's top it jumps, to land on it |
 | `STAY_CHANCE`, `WALK_OFF_SPEED` | On a window, how often it wanders along it rather than anywhere (maybe off it), and how fast it goes on as it walks off |
+| `WALL_BOUNCE_SPEED`, `WALL_SLIDE_SPEED`, `WALL_HOLD`, `WALL_JUMP` | Thrown at a wall at least this fast it bounces off it (slower, it grabs it), how fast it slides down, for how long, and how it jumps off |
+| `CORNER_CHANCE`, `HANG_SECONDS` | How often it goes up onto a window by a corner (else straight onto the top), and how long it hangs before pulling itself up |
+| `PARKOUR_CHANCE`, `KICK_RISE`, `KICK_TIME`, `MIN_GAP`, `MAX_GAP`, `MAX_KICKS` | Going up a gap wall to wall: how often even when one jump would do, how much higher and how fast each jump goes, how narrow and wide the gap can be, and how many jumps at most |
 
 `physics.py` holds what Capu and the dummy share:
 
@@ -310,7 +334,7 @@ start fading.
 
 `screen.py` holds what all of them share to draw on the screen (the
 transparent color, where the cursor and the taskbar are), `tray.py` the
-tray icon and `platforms.py` where the windows' tops are (and which parts of
+tray icon and `platforms.py` where the windows' tops and sides are (and which parts of
 them are covered by windows in front). `TRAY_SIZES`, `TRAY_HEAD` and `TRAY_OUTLINE` in `capu.py` set how
 the icon is drawn: at 16 px only Capu's head fits.
 

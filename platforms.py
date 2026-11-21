@@ -127,6 +127,32 @@ def ledges(windows, area, min_width):
     return out
 
 
+def walls(windows, area):
+    """The sides of the windows that can be seen, as walls: [(hwnd, x, top, bottom, face)].
+
+    `x` is the screen column of the side and `top`..`bottom` the screen rows it
+    spans, cut by the windows in front of it and by `area` (left, top, right,
+    bottom); `face` is the way it faces: -1 for a window's left side (something
+    to its left touches it), 1 for its right side. Only the windows that can be
+    stood on count, the same as for the ledges.
+    """
+    area_left, area_top, area_right, area_bottom = area
+    out = []
+    for i, (hwnd, rect, standable) in enumerate(windows):
+        left, top, right, bottom = rect
+        if not standable:
+            continue
+        for x, face in ((left, -1), (right, 1)):
+            if not area_left < x < area_right:
+                continue
+            pieces = [(max(top, area_top), min(bottom, area_bottom))]
+            for _, (o_left, o_top, o_right, o_bottom), _ in windows[:i]:
+                if o_left < x < o_right:         # a window in front, across this side
+                    pieces = [p for piece in pieces for p in uncovered(piece, (o_top, o_bottom))]
+            out += [(hwnd, x, a, b, face) for a, b in pieces if b > a]
+    return out
+
+
 def landing(ledges, x, before, after):
     """What something at `x` lands on, going down from height `before` to `after`
     (above the taskbar): (height, window), with None for the taskbar; or None if

@@ -46,6 +46,29 @@ class Ledges(unittest.TestCase):
         self.assertEqual(platforms.ledges(windows, AREA, 100), [])
 
 
+class Walls(unittest.TestCase):
+    def test_a_window_alone_gives_both_its_sides(self):
+        self.assertEqual(platforms.walls([(1, (200, 400, 800, 900), True)], AREA),
+                         [(1, 200, 400, 900, -1), (1, 800, 400, 900, 1)])
+
+    def test_a_window_in_front_covers_the_side_behind_it(self):
+        front = (2, (100, 500, 300, 700), True)  # across the back one's left side (column 200)
+        back = (1, (200, 400, 800, 900), True)
+        self.assertEqual([w for w in platforms.walls([front, back], AREA) if w[0] == 1],
+                         [(1, 200, 400, 500, -1), (1, 200, 700, 900, -1), (1, 800, 400, 900, 1)])
+
+    def test_windows_that_cant_be_stood_on_are_no_walls_but_cover(self):
+        front = (2, (0, 0, 1920, 1000), False)   # maximized: it covers everything behind it
+        back = (1, (200, 400, 800, 900), True)
+        self.assertEqual(platforms.walls([front, back], AREA), [])
+
+    def test_sides_are_cut_to_the_area(self):
+        windows = [(1, (200, 50, 800, 1200), True),     # taller than the work area
+                   (2, (1800, 400, 2600, 900), True)]   # its right side on another monitor
+        self.assertEqual(platforms.walls(windows, AREA),
+                         [(1, 200, 100, 1000, -1), (1, 800, 100, 1000, 1), (2, 1800, 400, 900, -1)])
+
+
 class Landing(unittest.TestCase):
     LEDGES = [(500, 100, 300, 2), (300, 200, 600, 1)]   # (height, left, right, window), highest first
 

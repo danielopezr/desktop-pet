@@ -45,12 +45,14 @@ both in this one program.
   moved, and falls off (unhurt) when the window closes, is covered or it walks
   off the edge.
 
-Every animation in the pack is listed in ANIMATIONS; the ones not used yet
-are ready for later. The sprites are not included in the repository (see
-README.md): put the pack's PNG files in assets/capu/sprites.
+Every animation is listed in ANIMATIONS (dozing off and sleeping have sheets
+of their own only in Capu's sprites; with the pack they come from Death.png).
+The sprites are not included in the repository (see README.md): put the
+pack's PNG files in assets/capu/sprites.
 """
 import ctypes
 import json
+import math
 import os
 import random
 import time
@@ -66,7 +68,7 @@ import platforms
 import tray
 import ui
 from screen import KEY_COLOR, mouse_pos, solid_mask, to_photo, work_area
-from physics import (FALL_DAMAGE_SPEED, GRAVITY, IMPACT_BOUNCE, IMPACT_SPEED, CursorTrail,
+from physics import (FALL_DAMAGE_SPEED, GRAVITY, IMPACT_BOUNCE, IMPACT_SPEED, WALL_BOUNCE, CursorTrail,
                      fly_step, is_drag, throw_velocity)
 
 # --- Settings ------------------------------------------------------------------
@@ -147,6 +149,24 @@ CLIMB_RANGE = 700             # ...and at most this far to either side
 CLIMB_OVERSHOOT = 40          # it jumps this much higher than the window top, to land on it
 STAY_CHANCE = 0.6             # on a window, chance of wandering along it (else anywhere: maybe off it)
 WALK_OFF_SPEED = 120          # sideways speed it keeps as it walks off the edge of a window
+
+# Parkour: the screen's edges and the windows' sides are walls (only in the air)
+WALL_BOUNCE_SPEED = 900       # thrown at a wall this fast (sideways) or more, it bounces off it; slower,
+                              # it grabs it and slides...
+WALL_SLIDE_SPEED = 140        # ...down at this speed, in pixels per second...
+WALL_HOLD = 0.7               # ...for this long, and then jumps off it, back into the screen
+WALL_JUMP = (420, 700)        # sideways and upward speed of that jump off a wall
+WALL_CLING = 0.12             # on a wall before each jump off it (the first two frames of its jump)
+CORNER_CHANCE = 0.5           # chance of climbing onto a window by its corner (else it jumps straight on top)
+PARKOUR_CHANCE = 0.5          # chance of going up a gap between walls, wall to wall, even if one jump would do
+KICK_RISE = 150               # height it gains with each jump from wall to wall, in pixels
+KICK_TIME = 0.35              # seconds each of those jumps takes
+MIN_GAP = 120                 # a gap between two walls it goes up must be at least this wide...
+MAX_GAP = 320                 # ...and at most this wide, in pixels
+MAX_KICKS = 8                 # ...and need at most this many jumps
+HANG_SECONDS = (0.3, 0.7)     # how long it hangs from a window's corner before pulling itself up
+LEDGE_REACH = 9.5             # sprite pixels from its body center to the corner it hangs from
+                              # (where sprite-lab draws the window in "Ledge Grab"/"Ledge Climb")
 SLASH_FRAMES = {"attack1": (3,), "attack2": (3, 9)}  # frames where the slash lands
 
 # Dodging the dummy when it is thrown at Capu
@@ -200,12 +220,21 @@ ANIMATIONS = {
     "fall":    ("Fall.png",     100, True),
     "hurt":    ("Hurt.png",      70, False),
     "death":   ("Death.png",     90, False),
-    # The pack has no sleeping animation: it slumps with its eyes closed partway
-    # through Death.png, so those frames (FRAME_PICKS) make dozing off and sleeping.
-    "doze":    ("Death.png",    150, False),
-    "sleep":   ("Death.png",    900, True),
+    # Dozing off and sleeping have sheets of their own in Capu's sprites. The
+    # pack has none, but it slumps with its eyes closed partway through
+    # Death.png, so without them those frames (FALLBACKS) make them instead.
+    "doze":    ("Doze.png",     150, False),
+    "sleep":   ("Sleep.png",    900, True),
+    # Capu's own sprites only (the pack has nothing like them): without them it
+    # bounces off the walls, only jumps straight onto windows and celebrates with hops.
+    "wall_slide":  ("Wall Slide.png",   90, True),
+    "wall_jump":   ("Wall Jump.png",    60, False),
+    "ledge_grab":  ("Ledge Grab.png",  140, True),
+    "ledge_climb": ("Ledge Climb.png",  70, False),
+    "celebrate":   ("Celebrate.png",    80, False),
 }
-FRAME_PICKS = {"doze": (3, 4, 5, 6), "sleep": (6, 7)}   # frames of the file each one uses
+FALLBACKS = {"doze": ("Death.png", (3, 4, 5, 6)), "sleep": ("Death.png", (6, 7))}  # file and frames
+OPTIONAL = ("wall_slide", "wall_jump", "ledge_grab", "ledge_climb", "celebrate")
 USED = tuple(ANIMATIONS)
 
 
@@ -271,14 +300,41 @@ def fullscreen_app_open():
                 and rect.right >= m.right and rect.bottom >= m.bottom)
 
 
+def source(name):
+    """(file, frames) animation `name` comes from: its own sheet (frames None:
+    all of them), or the frames of another one when it has none (FALLBACKS)."""
+    file = ANIMATIONS[name][0]
+    if name in FALLBACKS and not (SPRITES / file).exists():
+        return FALLBACKS[name]
+    return file, None
+
+
+def available(name):
+    """Whether animation `name` can be shown: its sheet (or the one it borrows from) is there."""
+    return (SPRITES / source(name)[0]).exists()
+
+
+def shown_animations():
+    """The animations it has sprites for (the OPTIONAL ones only come with Capu's own)."""
+    return [name for name in ANIMATIONS if available(name)]
+
+
 def missing_sprites():
-    return [file for file, _, _ in ANIMATIONS.values() if not (SPRITES / file).exists()]
+    files = dict.fromkeys(source(name)[0] for name in ANIMATIONS if name not in OPTIONAL)
+    return [file for file in files if not (SPRITES / file).exists()]
 
 
 def raw_frames(file):
     sheet = Image.open(SPRITES / file).convert("RGBA")
     return [sheet.crop((i * FRAME, 0, (i + 1) * FRAME, FRAME))
             for i in range(sheet.width // FRAME)]
+
+
+def sheet_frames(name):
+    """The frames of animation `name`, uncropped (only the picked ones, if it borrows them)."""
+    file, picks = source(name)
+    frames = raw_frames(file)
+    return frames if picks is None else [frames[i] for i in picks]
 
 
 def union_bbox(frames):
@@ -295,7 +351,7 @@ def crop_box():
     most idle and run frames (a stray frame goes one pixel lower and must not
     leave the rest floating).
     """
-    all_frames = [f for file, _, _ in ANIMATIONS.values() for f in raw_frames(file)]
+    all_frames = [f for name in shown_animations() for f in sheet_frames(name)]
     x0, y0, x1, y1 = union_bbox(all_frames)
     bx0, _, bx1, _ = union_bbox(raw_frames(ANIMATIONS["idle"][0]))
     center = (bx0 + bx1) / 2
@@ -308,9 +364,8 @@ def crop_box():
 
 
 def animation_frames(name, box):
-    """The frames of animation `name`, cropped to `box` (only the picked ones, if any)."""
-    frames = [f.crop(box) for f in raw_frames(ANIMATIONS[name][0])]
-    return [frames[i] for i in FRAME_PICKS[name]] if name in FRAME_PICKS else frames
+    """The frames of animation `name`, cropped to `box`."""
+    return [f.crop(box) for f in sheet_frames(name)]
 
 
 HORN_ROWS = 3                 # rows of the horns that mark the width of its head
@@ -364,6 +419,12 @@ def nose(frame):
             if a >= 128 and (r, g, b) == NOSE:
                 return x - HOOD_HALF, y - NOSE_TO_TOP, x + HOOD_HALF + 1
     return None
+
+
+def nose_at(frame):
+    """(x, y) of its nose in `frame` (lantern sprites only)."""
+    left, top, _ = nose(frame)
+    return left + HOOD_HALF, top + NOSE_TO_TOP
 
 
 def head_mark(frame):
@@ -467,7 +528,8 @@ class App:
         self.settings = load_settings()
         self.away = False                         # hidden by "do not disturb"
         self.ledges = []                          # window tops to stand on: (height, left, right, window)
-        self.dummy = training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
+        self.walls = []                           # window sides: (x, low, high, face, window), see all_walls
+        self.dummy =training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
         self.capu = Capu(self.root, self)
         try:
             self.tray = tray.TrayIcon(self.root, tray_images(self.capu.box), "Capu",
@@ -482,13 +544,15 @@ class App:
         """Now and then: where the tops of the open windows are (both of them
         stand on them), and whether each one still has its footing."""
         try:
-            self.ledges = []
+            self.ledges, self.walls = [], []
             if self.settings["windows"] and not self.away:
                 left, top, right, bottom = work_area()
-                found = platforms.ledges(platforms.window_rects(), (left, top, right, bottom),
-                                         LEDGE_MIN)
+                windows = platforms.window_rects()
+                found = platforms.ledges(windows, (left, top, right, bottom), LEDGE_MIN)
                 self.ledges = sorted(((bottom - y, l, r, hwnd) for hwnd, l, r, y in found),
                                      reverse=True)            # the highest first
+                self.walls = [(x, bottom - b, bottom - a, face, hwnd)        # heights above the taskbar
+                              for hwnd, x, a, b, face in platforms.walls(windows, (left, top, right, bottom))]
             for _, c in self.characters():
                 c.check_footing()
         finally:
@@ -498,6 +562,14 @@ class App:
         """The window tops with `room` pixels free above them, up to the top of the screen."""
         _, top, _, bottom = work_area()
         return [ledge for ledge in self.ledges if ledge[0] + room <= bottom - top]
+
+    def all_walls(self):
+        """The walls: the windows' sides and the screen's edges, as (x, low, high, face, window).
+        `x` is the screen column, `low`..`high` the heights above the taskbar it
+        spans and `face` the way it faces (-1: touched from its left, 1: from its
+        right); the screen's edges have no window."""
+        left, top, right, bottom = work_area()
+        return self.walls + [(left, 0.0, bottom - top, 1, None), (right, 0.0, bottom - top, -1, None)]
 
     def on_destroy(self, event):
         """The program is closing: take its icon out of the tray."""
@@ -638,7 +710,18 @@ class Capu:
         self.turn_shift = idle_offset
         idle_height = self.ground - head_top_row(idle_frame) * SCALE
         self.head_offsets, self.head_heights = {}, {}
-        for name in USED:
+        self.shown_anims = shown_animations()
+        # What it can do with the sprites it has (Capu's own add walls, corners and a cheer).
+        self.can_wall = available("wall_slide") and available("wall_jump")
+        self.can_hang = available("ledge_grab") and available("ledge_climb")
+        self.can_cheer = available("celebrate")
+        # Hanging from a corner it is drawn down and to one side of where it will
+        # stand on the window: how far (screen pixels, facing right), from its nose.
+        self.hang_shift = (0.0, 0.0)
+        if self.can_hang:
+            (ix, iy), (gx, gy) = (nose_at(sheet_frames(n)[0]) for n in ("idle", "ledge_grab"))
+            self.hang_shift = ((gx - ix) * SCALE, (gy - iy) * SCALE)
+        for name in self.shown_anims:
             frames = animation_frames(name, box)
             self.head_offsets[name] = fill_gaps([head_offset(f) for f in frames], idle_offset)
             rows = fill_gaps([head_top_row(f) for f in frames], None)
@@ -649,7 +732,7 @@ class Capu:
 
         # Frames facing right (original) and left (flipped).
         self.frames = {}
-        for name in USED:
+        for name in self.shown_anims:
             raw = animation_frames(name, box)
             self.frames[name] = {
                 1: [to_photo(f, SCALE) for f in raw],
@@ -661,10 +744,16 @@ class Capu:
 
         # Hit zone behind it, shaped like its idle pose (one shape per side it
         # faces): the mouse doesn't slip through the gaps in its pixel art.
+        # Hanging and climbing it is drawn away from where it stands: those get their own.
         idle_frames = [f.crop(box) for f in raw_frames(ANIMATIONS["idle"][0])]
-        self.hit_shapes = {facing: hit_shape(idle_frames, facing) for facing in (1, -1)}
+        self.hit_shapes = {None: {facing: hit_shape(idle_frames, facing) for facing in (1, -1)}}
+        for name in ("ledge_grab", "ledge_climb"):
+            if name in self.shown_anims:
+                frames = animation_frames(name, box)
+                self.hit_shapes[name] = {facing: hit_shape(frames, facing) for facing in (1, -1)}
         self.hitbox = ui.hit_zone(master)
-        self.hitbox_facing = None             # the side its current shape faces
+        self.hitbox_facing = None             # the side its current shape faces...
+        self.hitbox_kind = None               # ...and whose shape it is (None: the idle pose)
         self.hitbox_shown = False
 
         # Sword cursor over it; a closed hand while holding it.
@@ -708,6 +797,11 @@ class Capu:
         self.platform = None                      # the window it stands on (None: the taskbar)
         self.platform_rect = None                 # ...and where that window was last seen
         self.vx = self.vy = 0.0                   # speed, positive is right / up
+        self.climb_plan = ("leap", None)          # how it goes up onto a window (see ledge_to_climb)
+        self.route = []                           # parkour: the steps still ahead (see chimney)
+        self.flight = None                        # ...and the jump it is in (see launch)
+        self.wall = None                          # the wall it slides down (see grab_wall)
+        self.wall_left = self.cling = self.hang_left = 0.0
         self.facing = random.choice((1, -1))
         self.hits = 0
         self.alive = True
@@ -877,6 +971,8 @@ class Capu:
         elif state == "celebrate":
             self.hops_left = CELEBRATE_HOPS
             self.vy = 0.0
+            if self.can_cheer:
+                self.set_anim("celebrate", restart=True)
         elif state == "doze":
             self.start_doze()
         elif state == "sleep":
@@ -888,7 +984,8 @@ class Capu:
         elif state == "shuffle":
             self.start_shuffle()
         elif state == "climb":
-            self.target = self.takeoff_x(self.climb_to)
+            self.target = (self.takeoff_x(self.climb_to) if self.climb_plan[0] == "leap"
+                           else self.climb_plan[1])
             self.set_anim("run")
         elif state in ("leap", "falling"):
             self.set_anim("jump" if self.vy > 0 else "fall", restart=True)
@@ -1046,6 +1143,16 @@ class Capu:
             self.jump(dt)
         elif self.state == "climb":
             self.climb(dt)
+        elif self.state == "parkour":
+            self.parkour(dt)
+        elif self.state == "wall_jump":
+            self.wall_jump(dt)
+        elif self.state == "wall_slide":
+            self.wall_slide(dt)
+        elif self.state == "ledge_hang":
+            self.ledge_hang(dt)
+        elif self.state == "ledge_climb":
+            pass                             # pulling itself up: see animation_finished
         elif self.state in ("leap", "falling"):
             self.drop_down(dt)
         elif self.state == "air_attack":
@@ -1144,6 +1251,12 @@ class Capu:
                 self.set_state("idle", idle_seconds=ATTACK_PAUSE)
         elif self.state == "doze":
             self.set_state("sleep")      # slumped: now it sleeps
+        elif self.state == "ledge_climb":
+            self.set_state("idle", idle_seconds=JUMP_PAUSE)   # up on the window
+        elif self.state == "celebrate":
+            self.set_state("idle")
+        elif self.anim == "wall_jump" and self.state == "parkour":
+            self.set_anim("jump" if self.vy > 0 else "fall")
         elif self.state == "dead" and not self.closing:
             self.closing = True
             self.root.after(int(DEATH_LINGER * 1000), self.vanish)
@@ -1406,6 +1519,7 @@ class Capu:
         flinch longer: clicking fast can't keep it stunned.
         """
         startled = self.asleep()                 # woken up by it
+        self.let_go()                            # hanging from a corner: it falls from there
         self.hits += 1
         self.last_hurt = time.perf_counter()
         if self.state == "hurt" and self.hits < HITS_TO_DIE:
@@ -1431,6 +1545,7 @@ class Capu:
         """Pick it up: it hangs from the cursor at the point where it was grabbed."""
         if self.asleep():
             self.woken()
+        self.let_go()                        # hanging from a corner: picked up from where it is drawn
         # Hold it by wherever the cursor is on it now, so it doesn't jump.
         mx, my = mouse_pos()
         _, _, _, bottom = work_area()
@@ -1465,15 +1580,19 @@ class Capu:
         self.y = max(bottom - self.ground - (my - oy), 0.0)   # never below the taskbar
 
     def fly(self, dt):
-        """Thrown: move with its own speed, slowed by the air, bouncing off the screen edges."""
+        """Thrown: move with its own speed, slowed by the air, bouncing off the screen
+        edges (or grabbing a wall it hits hard enough, see grab_wall)."""
         lo, hi = self.bounds()
         _, top, _, bottom = work_area()
         ceiling = bottom - top - self.ground  # its window can't go above the screen
         before = self.vx
+        x_before = self.x
         falling = -self.vy
         height = self.y
         self.x, self.vx, self.y, self.vy = fly_step(self.x, self.vx, self.y, self.vy,
                                                     dt, lo, hi, ceiling)
+        if self.grab_wall(x_before, before):  # thrown hard into a wall: it slides down it
+            return
         if before * self.vx < 0 and abs(self.vx) > 50:   # bounced: face the new way
             self.facing = 1 if self.vx > 0 else -1
         if self.land(height):                # landed (on the taskbar or a window)
@@ -1536,6 +1655,7 @@ class Capu:
     def step_off(self):
         """The window under its feet is gone: it falls (no harm in it), keeping
         a little of its stride if it was walking."""
+        self.let_go()                        # it was hanging from that window's corner
         self.platform = self.platform_rect = None
         self.floor = 0.0
         if self.y <= 0:                      # (only a window down at the taskbar)
@@ -1549,19 +1669,113 @@ class Capu:
         self.set_state("falling")
 
     def ledge_to_climb(self):
-        """A window top close enough to jump up onto, or None."""
-        options = []
-        for ledge in self.ledges:
-            height, left, right, hwnd = ledge
-            if hwnd == self.platform or not CLIMB_MIN <= height - self.y <= CLIMB_HEIGHT:
+        """A window top to climb, or None. How it goes up is picked too (see
+        climb_plans): one jump straight onto it, a jump to one of its corners
+        to hang from it and pull itself up, or wall to wall up a gap."""
+        options = [(ledge, plans) for ledge in self.ledges for plans in [self.climb_plans(ledge)] if plans]
+        if not options:
+            return None
+        ledge, plans = random.choice(options)
+        kinds = {}
+        for plan in plans:
+            kinds.setdefault(plan[0], []).append(plan)
+        if "parkour" in kinds and (len(kinds) == 1 or random.random() < PARKOUR_CHANCE):
+            self.climb_plan = random.choice(kinds["parkour"])
+        elif "corner" in kinds and ("leap" not in kinds or random.random() < CORNER_CHANCE):
+            self.climb_plan = random.choice(kinds["corner"])
+        else:
+            self.climb_plan = kinds["leap"][0]
+        return ledge
+
+    def on_my_floor(self, x):
+        """Whether it can walk to `x` without leaving what it stands on."""
+        return self.platform_rect is None or self.platform_rect[0] <= x <= self.platform_rect[2]
+
+    def climb_plans(self, ledge):
+        """The ways up onto `ledge` from where it stands: ("leap", x), ("corner",
+        x, corner) or ("parkour", x, route), each with the spot `x` it starts from."""
+        height, left, right, hwnd = ledge
+        if hwnd == self.platform or height - self.y < CLIMB_MIN:
+            return []
+        lo, hi = self.bounds()
+        plans = []
+        spot = self.takeoff_x(ledge)
+        if height - self.y <= CLIMB_HEIGHT and abs(spot - self.x) <= CLIMB_RANGE and self.on_my_floor(spot):
+            plans.append(("leap", spot))
+        for corner in self.corners(ledge):
+            hang_x, hang_y = corner[3], corner[4]
+            if (self.can_hang and CLIMB_MIN <= hang_y - self.y <= CLIMB_HEIGHT and lo <= hang_x <= hi
+                    and abs(hang_x - self.x) <= CLIMB_RANGE and self.on_my_floor(hang_x)):
+                plans.append(("corner", hang_x, corner))
+            route = self.chimney(ledge, corner) if self.can_wall else None
+            if route:
+                plans.append(("parkour",) + route)
+        return plans
+
+    def corners(self, ledge):
+        """The corners of `ledge` it can hang from: [(side, facing, stand_x, hang_x,
+        hang_y)]. `side` is the window's side (screen column), `facing` the way it
+        faces hanging there (towards the window), `stand_x` where it stands once up
+        and (hang_x, hang_y) where its body is while it hangs. Only real corners: not
+        where a window in front cuts the top."""
+        height, left, right, hwnd = ledge
+        rect = platforms.window_rect(hwnd)
+        if rect is None:
+            return []
+        out = []
+        for side, facing in ((left, 1), (right, -1)):
+            if side != (rect[0] if facing == 1 else rect[2]):
                 continue
-            spot = self.takeoff_x(ledge)
-            if abs(spot - self.x) > CLIMB_RANGE:
+            stand_x = side + facing * LEDGE_REACH * SCALE
+            out.append((side, facing, stand_x, stand_x + facing * self.hang_shift[0],
+                        height - self.hang_shift[1]))
+        return out
+
+    def chimney(self, ledge, corner):
+        """A way up wall to wall to `corner` of `ledge`: (start_x, route) or None.
+
+        It goes up the gap between that side of the window and a wall facing it
+        (the screen's edge or another window's side), jumping from one to the
+        other and rising the same at each jump; the last one is to the corner
+        (to hang from it) or straight onto the top. Every wall it touches must be
+        there at that height.
+        """
+        height, left, right, hwnd = ledge
+        side, facing, stand_x, hang_x, hang_y = corner
+        bh = self.body_half
+        _, top, _, bottom = work_area()
+        walls = self.app.all_walls()
+        own = [w for w in walls if w[4] == hwnd and w[0] == side and w[3] == -facing]
+        if not own:
+            return None
+        lo, hi = self.bounds()
+        hang = self.can_hang and random.random() < CORNER_CHANCE
+        end = ("hang", stand_x, height, hwnd, facing, hang_x, hang_y) if hang else \
+              ("top", side + facing * (bh + 10), height + CLIMB_OVERSHOOT, hwnd)
+        end_y = end[6] if hang else end[2]
+        for other in walls:
+            gap = (side - other[0]) * facing
+            if other[3] != facing or not MIN_GAP <= gap <= MAX_GAP:
                 continue
-            if self.platform_rect is not None and not self.platform_rect[0] <= spot <= self.platform_rect[2]:
-                continue                     # it would have to walk off this window first
-            options.append(ledge)
-        return random.choice(options) if options else None
+            x_other, x_own = other[0] + facing * bh, side - facing * bh   # body center touching each
+            start = (x_other + x_own) / 2
+            if not (lo <= start <= hi and abs(start - self.x) <= CLIMB_RANGE and self.on_my_floor(start)):
+                continue
+            jumps = max(2, math.ceil((end_y - self.y) / KICK_RISE))
+            if jumps - 1 > MAX_KICKS:
+                continue
+            rise = (end_y - self.y) / jumps
+            route = []
+            for i in range(1, jumps):        # the last wall before the corner is the other one
+                wall = other if (jumps - 1 - i) % 2 == 0 else own[0]
+                y = self.y + rise * i
+                middle = y + self.body_height / 2
+                if not (wall[1] <= middle <= wall[2]) or y + self.body_height > bottom - top:
+                    break
+                route.append(("wall", x_other if wall is other else x_own, wall[3], y, wall[4]))
+            else:
+                return start, route + [end]
+        return None
 
     def takeoff_x(self, ledge):
         """Where it jumps from to land on `ledge`: under it, as close as it can."""
@@ -1570,15 +1784,27 @@ class Capu:
         return min(max(self.x, left + self.body_half, lo), right - self.body_half, hi)
 
     def climb(self, dt):
-        """Run under the window's top and jump up onto it."""
+        """Run to where it goes up from, and go up: one jump onto the top, a jump
+        to a corner, or wall to wall up a gap (see ledge_to_climb)."""
         same = [l for l in self.ledges if l[3] == self.climb_to[3]]
         if not same:                         # the window is gone (or covered)
             self.set_state("idle")
             return
-        self.climb_to = min(same, key=lambda l: abs(self.takeoff_x(l) - self.x))
-        self.target = self.takeoff_x(self.climb_to)
+        kind = self.climb_plan[0]
+        if kind == "leap":
+            self.climb_to = min(same, key=lambda l: abs(self.takeoff_x(l) - self.x))
+            self.target = self.takeoff_x(self.climb_to)
+        else:                                # the window may have moved: plan it again
+            plans = [(l, p) for l in same for p in self.climb_plans(l) if p[0] == kind]
+            if not plans:
+                self.set_state("idle")       # out of reach now
+                return
+            self.climb_to, self.climb_plan = min(plans, key=lambda lp: abs(lp[1][1] - self.x))
+            self.target = self.climb_plan[1]
         self.move_towards(self.target, RUN_SPEED, dt)
-        if self.x == self.target:
+        if self.x != self.target:
+            return
+        if kind == "leap":
             rise = self.climb_to[0] - self.y + CLIMB_OVERSHOOT
             if not 0 < rise <= CLIMB_HEIGHT + CLIMB_OVERSHOOT:
                 self.set_state("idle")       # the window moved out of reach
@@ -1586,6 +1812,200 @@ class Capu:
             self.vy = (2 * GRAVITY * rise) ** 0.5
             self.y += 0.1                    # off the ground
             self.set_state("leap")
+        elif kind == "corner":
+            side, facing, stand_x, hang_x, hang_y = self.climb_plan[2]
+            self.facing = facing
+            self.route = [("hang", stand_x, self.climb_to[0], self.climb_to[3], facing, hang_x, hang_y)]
+            self.launch((hang_x, hang_y), (2 * (hang_y - self.y) / GRAVITY) ** 0.5)
+        else:
+            self.route = list(self.climb_plan[2])
+            self.launch(self.step_target(self.route[0]), KICK_TIME)
+
+    # --- Parkour: walls, corners and the jumps between them ---------------------------
+    @staticmethod
+    def step_target(step):
+        """Where a step of a route takes it: (x, height) of its body (see chimney)."""
+        if step[0] == "wall":
+            return step[1], step[3]
+        if step[0] == "hang":
+            return step[5], step[6]
+        return step[1], step[2]
+
+    def launch(self, target, seconds, vx=0.0, vy=0.0):
+        """Jump off: to reach `target` (x, height) in `seconds` (it gets there at
+        the top of its jump, or on the way up), or, with no target, with speed (vx, vy)."""
+        if target is not None:
+            tx, ty = target
+            vx = (tx - self.x) / seconds
+            vy = (ty - self.y + GRAVITY * seconds * seconds / 2) / seconds
+        self.vx, self.vy = vx, vy
+        self.flight = {"target": target, "seconds": seconds, "t": 0.0}
+        self.platform = self.platform_rect = None
+        self.floor = 0.0
+        self.y += 0.1                        # off the ground
+        self.state = "parkour"
+        if self.anim != "wall_jump":
+            self.set_anim("jump", restart=True)
+
+    def parkour(self, dt):
+        """In the air, parkouring: on its way to the next step of its route, or
+        free (after jumping off a wall, or onto a window's top) until it lands."""
+        flight = self.flight
+        before = self.y
+        lo, hi = self.bounds()
+        self.x = min(max(self.x + self.vx * dt, lo), hi)
+        self.vy -= GRAVITY * dt
+        self.y += self.vy * dt
+        if flight["target"] is not None:
+            flight["t"] += dt
+            if flight["t"] >= flight["seconds"]:
+                self.x, self.y = flight["target"]
+                self.arrive()
+                return
+            if self.y < 0:                   # can't go through the taskbar
+                self.y = 0.0
+        elif self.land(before):
+            self.vx = 0.0
+            self.set_state("idle", idle_seconds=JUMP_PAUSE)
+            return
+        if self.anim != "wall_jump":
+            self.set_anim("jump" if self.vy > 0 else "fall")
+
+    def arrive(self):
+        """Got to the next step of its route: a wall to jump off again, a corner to
+        hang from, or above a window's top to drop onto it."""
+        step = self.route.pop(0)
+        if step[0] == "wall":
+            _, x, face, y, hwnd = step
+            if self.find_wall(hwnd, face) is None:
+                self.route = []              # the window has gone: it just falls
+                self.launch(None, 0.0)
+                return
+            self.vx = self.vy = 0.0
+            self.cling_to(face, WALL_CLING)
+        elif step[0] == "hang":
+            _, stand_x, height, hwnd, facing, _, _ = step
+            if not any(l[3] == hwnd and abs(l[0] - height) <= 2 for l in self.ledges):
+                self.launch(None, 0.0)       # the window has gone (or moved)
+                return
+            self.hang_from(stand_x, height, hwnd, facing)
+        else:
+            self.vx = self.vy = 0.0
+            self.launch(None, 0.0)           # drops onto the window's top
+
+    def find_wall(self, hwnd, face):
+        """The wall of window `hwnd` facing `face` next to its body, or None (it has
+        gone); the screen's edges (hwnd None) are always there."""
+        middle = self.y + self.body_height / 2
+        for wall in self.app.all_walls():
+            if wall[4] == hwnd and wall[3] == face and wall[1] <= middle <= wall[2]:
+                return wall
+        return None
+
+    def cling_to(self, face, seconds):
+        """On a wall, back to it (facing away) and crouched for `seconds`, then it
+        jumps off it: to the next step of its route, or back into the screen."""
+        self.facing = face
+        self.cling = seconds
+        self.state = "wall_jump"
+        self.set_anim("wall_jump", restart=True)
+
+    def wall_jump(self, dt):
+        self.cling -= dt
+        if self.cling > 0:
+            return
+        if self.route:
+            self.launch(self.step_target(self.route[0]), KICK_TIME)
+        else:
+            self.launch(None, 0.0, self.facing * WALL_JUMP[0], WALL_JUMP[1])
+
+    def grab_wall(self, x_before, vx):
+        """Thrown into a wall: fast, it bounces off it; slower, it grabs it and slides
+        down it (True). The screen's edges are walls (bouncing off them is fly_step's);
+        so are the windows' sides."""
+        if not self.can_wall:
+            return False
+        middle = self.y + self.body_height / 2
+        hits = []
+        for wall in self.app.all_walls():
+            x, low, high, face, hwnd = wall
+            touch = x + face * self.body_half    # its body center, touching the wall
+            if vx * face < 0 and (x_before - touch) * (self.x - touch) <= 0 and low <= middle <= high:
+                hits.append((abs(x_before - touch), touch, wall))
+        if not hits:
+            return False
+        _, touch, wall = min(hits)
+        if abs(vx) >= WALL_BOUNCE_SPEED:
+            if wall[4] is not None:          # off a window's side, as off the screen's edges
+                self.x, self.vx = touch, -vx * WALL_BOUNCE
+            return False
+        self.x, self.vx, self.vy = touch, 0.0, 0.0
+        self.facing = wall[3]
+        self.wall = wall
+        self.wall_left = WALL_HOLD
+        self.route = []
+        self.impact_done = True
+        self.state = "wall_slide"
+        self.set_anim("wall_slide", restart=True)
+        return True
+
+    def wall_slide(self, dt):
+        """Sliding down a wall: it lands, falls off where the wall ends, or after a
+        moment jumps off it, back into the screen."""
+        x, low, high, face, hwnd = self.wall
+        wall = self.find_wall(hwnd, face)
+        if wall is None or self.y + self.body_height / 2 < low:
+            self.vx = self.vy = 0.0
+            self.set_state("falling")        # the wall has ended (or gone)
+            return
+        self.wall = wall
+        self.x = wall[0] + face * self.body_half     # its window may have moved
+        before = self.y
+        self.vy = -WALL_SLIDE_SPEED
+        self.y += self.vy * dt
+        if self.land(before):
+            self.set_state("idle", idle_seconds=JUMP_PAUSE)
+            return
+        self.wall_left -= dt
+        if self.wall_left <= 0:
+            self.cling_to(face, WALL_CLING)
+
+    def hang_from(self, stand_x, height, hwnd, facing):
+        """Grab a window's corner. It is already where it will stand once up (on the
+        window, riding it if it moves); the sprite shows it hanging below that."""
+        self.x, self.y = stand_x, height
+        self.vx = self.vy = 0.0
+        self.floor, self.platform = height, hwnd
+        self.platform_rect = platforms.window_rect(hwnd)
+        self.facing = facing
+        self.hang_left = random.uniform(*HANG_SECONDS)
+        self.state = "ledge_hang"
+        self.set_anim("ledge_grab", restart=True)
+
+    def ledge_hang(self, dt):
+        self.hang_left -= dt
+        if self.hang_left <= 0:
+            self.state = "ledge_climb"
+            self.set_anim("ledge_climb", restart=True)
+
+    def drawn_shift(self):
+        """(dx, dy) from where it stands to where it is drawn: only while it hangs
+        from a corner or climbs (the sprite shows it below and beside the top)."""
+        if self.state not in ("ledge_hang", "ledge_climb") or self.anim not in ("ledge_grab", "ledge_climb"):
+            return 0.0, 0.0
+        i = min(self.frame_index, len(self.head_offsets[self.anim]) - 1)
+        dx = (self.head_offsets[self.anim][i] - self.head_offsets["idle"][0]) * self.facing
+        return dx, self.head_heights[self.anim][i] - self.head_heights["idle"][0]
+
+    def let_go(self):
+        """Hanging from a corner or climbing, it lets go: from where it is drawn."""
+        if self.state not in ("ledge_hang", "ledge_climb"):
+            return
+        dx, dy = self.drawn_shift()
+        self.x += dx
+        self.y = max(self.y + dy, 0.0)
+        self.platform = self.platform_rect = None
+        self.floor = 0.0
 
     def drop_down(self, dt):
         """Leaping up onto a window, or falling off one: on landing, a short rest."""
@@ -1598,7 +2018,9 @@ class Capu:
     # --- Interactions with the dummy ------------------------------------------------
     def body_box(self):
         """(left, right, bottom, top) of its body: x on the screen, heights above the taskbar."""
-        return self.x - self.body_half, self.x + self.body_half, self.y, self.y + self.body_height
+        dx, dy = self.drawn_shift()          # hanging from a corner it is drawn lower
+        x, y = self.x + dx, self.y + dy
+        return x - self.body_half, x + self.body_half, y, y + self.body_height
 
     def touches_dummy(self):
         if self.dummy is None or not self.dummy.can_be_hit():
@@ -1798,7 +2220,10 @@ class Capu:
                 self.set_state("idle", idle_seconds=JUMP_PAUSE)
 
     def celebrate(self, dt):
-        """Little hops of joy after breaking the dummy."""
+        """After breaking the dummy: its victory pose (it plays where it stands, see
+        animation_finished), or, with the pack's sprites, little hops of joy."""
+        if self.can_cheer:
+            return
         if self.grounded() and self.vy <= 0:
             if self.hops_left == 0:
                 self.set_state("idle")
@@ -1870,11 +2295,17 @@ class Capu:
         self.show_hitbox(self.alive and not self.hidden and not self.gone and not self.away)
         if not self.hitbox_shown:
             return
-        shape, (ox, oy) = self.hit_shapes[self.facing]
-        if self.facing != self.hitbox_facing:
+        shape, (ox, oy) = self.hit_shape_now()
+        kind = self.anim if self.anim in self.hit_shapes else None
+        if (kind, self.facing) != (self.hitbox_kind, self.hitbox_facing):
             ui.shape_window(ui.top_hwnd(self.hitbox), shape)
-            self.hitbox_facing = self.facing
+            self.hitbox_kind, self.hitbox_facing = kind, self.facing
         self.hitbox.geometry(f"{shape.width}x{shape.height}+{x + ox}+{y + oy}")
+
+    def hit_shape_now(self):
+        """(shape, offset in its window) of its hit zone now: its idle pose, or its
+        own one while it hangs from a corner or climbs (it is drawn elsewhere)."""
+        return self.hit_shapes[self.anim if self.anim in self.hit_shapes else None][self.facing]
 
     def show_hitbox(self, show):
         if show == self.hitbox_shown:
