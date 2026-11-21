@@ -6,7 +6,7 @@ A small desktop pet for Windows, written in Python with Tkinter. Capu lives on
 your taskbar, hunts your mouse cursor with the lantern it carries on its staff
 and trains on a dummy.
 
-![Capu chasing the cursor, the dummy being hit and thrown, Capu dodging it and getting hit back, breaking the dummy and celebrating, sliding down a window's side, climbing a window by its corner and going up a gap between two windows wall to wall](docs/demo.gif)
+![Capu chasing the cursor, the dummy being hit and thrown, Capu dodging it and getting hit back, breaking the dummy and celebrating, sliding down a window's side, climbing a window by its corner, going up a gap between two windows wall to wall and sitting on a window's edge, legs dangling](docs/demo.gif)
 
 *Recorded from the program itself, with a simulated cursor
 (`tools/record_demo.py`). Dummy art by Mattz Art.*
@@ -14,7 +14,8 @@ and trains on a dummy.
 ## What it does
 
 - **Wanders** along the bottom of the screen, standing on the taskbar: it
-  idles for a few seconds, then runs to a random spot.
+  idles for a few seconds, then walks to a spot nearby. It runs only when it
+  has somewhere to be: to the dummy, to climb a window, after the cursor.
 - **Trains** on the training dummy: now and then, when the dummy is close
   enough, Capu walks up to it and hits it a few times. Once in a while the
   dummy **hits back**: it swings on its post, takes half a heart from Capu
@@ -67,7 +68,9 @@ and trains on a dummy.
   window), it goes **up the gap wall to wall**, parkour style, even to windows
   too high for one jump. It lands on window tops when it is thrown or
   falls. Up there it wanders along the window, and rides along when you move
-  it. When the window closes, is minimized or maximized, another window
+  it. Now and then it **sits on one of the window's edges**, legs dangling
+  over the side and its lantern held out over the drop, for a while (it gets
+  up when its time is up, or when it sees the cursor). When the window closes, is minimized or maximized, another window
   covers the spot, or it walks off the edge, it drops down, unhurt. Only the
   parts of a window's top that can be seen count: any window in front
   (maximized ones too) covers the ones behind it.
@@ -195,7 +198,10 @@ assets/
 │       ├── Ledge Climb.png
 │       ├── Ledge Grab.png
 │       ├── Run.png
+│       ├── Sit Down.png
+│       ├── Sit.png
 │       ├── Sleep.png
+│       ├── Walk.png
 │       ├── Wall Jump.png
 │       └── Wall Slide.png
 ├── dummy/
@@ -235,7 +241,7 @@ It runs every test in `tests/` (about a minute and a half), with nothing to inst
 - `test_settings.py`: saving and loading the settings.
 - `test_ui.py`: the menu, hearts, the "!", "?" and "Z", text and cursors.
 - `test_app.py`: Capu and the dummy together (and the tray icon): walking on
-  windows, chasing and calm mode,
+  windows and sitting on their edges, chasing and calm mode,
   dozing off and waking up, the
   mid-air swing, dodging and knockback, the dummy hitting back, where the
   impacts land, the hearts, the cursors, the menu and settings, and do not
@@ -270,8 +276,9 @@ The constants at the top of `capu.py` control its behavior:
 | Setting | What it changes |
 |---|---|
 | `SCALE` | Size of the character on screen |
-| `RUN_SPEED`, `CHASE_SPEED` | Speed when wandering and when chasing |
+| `WALK_SPEED`, `RUN_SPEED`, `CHASE_SPEED` | Speed when wandering (walking: its steps match it), when running somewhere (to the dummy, to climb) and when chasing |
 | `IDLE_SECONDS` | How long it idles before wandering |
+| `MIN_RUN_DISTANCE`, `MAX_WANDER` | How short and how long each wander is |
 | `VISION_RANGE`, `VISION_HEIGHT` | How far it can see the cursor |
 | `ATTACK_REACH`, `ATTACK_HEIGHT`, `SLASH_CENTER` | How far and how high the lantern's swing reaches, and where it aims |
 | `TOO_CLOSE`, `DASH_SPEED` | When it dashes back, and how fast |
@@ -286,7 +293,7 @@ The constants at the top of `capu.py` control its behavior:
 | `SLEEP_AFTER`, `WAKE_PAUSE` | How long the mouse must be still for it to doze off, and how long it takes to come round |
 | `SNEAK_SPEED` | How slowly the cursor must move to sneak up on it asleep (it then wakes only when touched) |
 | `STARTLE_PUSH`, `STARTLE_LIFT` | How far aside and how high it hops when a hit wakes it up |
-| `NUDGE_SECONDS`, `SHUFFLE_DISTANCE`, `SHUFFLE_SPEED` | Calm mode: how long the cursor must rub it asleep before it gets up, and how far and how fast it walks off |
+| `NUDGE_SECONDS`, `SHUFFLE_DISTANCE`, `SHUFFLE_SPEED`, `SHUFFLE_FRAME_MS` | Calm mode: how long the cursor must rub it asleep before it gets up, and how far and how fast it walks off (its walk played slower, to match) |
 | `GROGGY_LOOKS`, `GROGGY_LOOK_SECONDS` | How many times it looks around, dazed, before walking off, and how long each look lasts |
 | `Z_EVERY`, `Z_SECONDS`, `Z_RISE`, `Z_DRIFT` | How often a "Z" starts floating up while it sleeps, how long each lasts, and how far it rises and drifts sideways |
 | `TRAIN_CHANCE`, `TRAIN_RANGE` | How often it goes to train on the dummy, and from how far |
@@ -301,6 +308,7 @@ The constants at the top of `capu.py` control its behavior:
 | `CLIMB_CHANCE`, `CLIMB_MIN`, `CLIMB_HEIGHT`, `CLIMB_RANGE` | How often it jumps up onto a window when it would wander, and how low, how high and how far away that window's top can be |
 | `CLIMB_OVERSHOOT` | How much higher than the window's top it jumps, to land on it |
 | `STAY_CHANCE`, `WALK_OFF_SPEED` | On a window, how often it wanders along it rather than anywhere (maybe off it), and how fast it goes on as it walks off |
+| `SIT_CHANCE`, `SIT_SECONDS` | On a window, how often it goes to sit on one of its edges when it would wander, and for how long it sits there |
 | `LIGHT_RADIUS`, `LIGHT_STRENGTH`, `LIGHT_STATES` | How far the lantern's glow reaches, how strong it shines, and how much brighter or dimmer while swinging, cheering, dozing or sleeping |
 | `LIGHT_FLICKER`, `LIGHT_FLICKER_MS` | How much the glow wavers, like a flame, and how often |
 | `WALL_BOUNCE_SPEED`, `WALL_SLIDE_SPEED`, `WALL_HOLD`, `WALL_JUMP` | Thrown at a wall at least this fast it bounces off it (slower, it grabs it), how fast it slides down, for how long, and how it jumps off |

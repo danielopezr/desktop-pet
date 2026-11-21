@@ -73,10 +73,12 @@ from physics import (FALL_DAMAGE_SPEED, GRAVITY, IMPACT_BOUNCE, IMPACT_SPEED, WA
 # --- Settings ------------------------------------------------------------------
 SCALE = 4                     # the character is ~27x22 px in the original sprite
 FRAME = 144                   # each frame of the sprite sheets is 144x144
-RUN_SPEED = 160               # pixels per second while wandering
+WALK_SPEED = 76               # pixels per second while wandering: its walk (each step matches it)
+RUN_SPEED = 160               # pixels per second while running somewhere (to train, to climb)
 CHASE_SPEED = 260             # pixels per second while chasing the cursor
 IDLE_SECONDS = (2.0, 7.0)     # how long it stays idle (min, max)
-MIN_RUN_DISTANCE = 150        # minimum length of each wander run, in pixels
+MIN_RUN_DISTANCE = 150        # each wander is at least this long...
+MAX_WANDER = 600              # ...and at most this long, in pixels
 TICK_MS = 16                  # update rate (~60 fps)
 
 # Vision and attack (screen pixels, measured from the character's body)
@@ -126,8 +128,8 @@ NUDGE_SECONDS = 2.0           # calm mode: this long of the cursor moving over i
 GROGGY_LOOKS = 3              # ...so it gets up and looks one way and the other, this many times...
 GROGGY_LOOK_SECONDS = 0.5     # ...this long each, dazed...
 SHUFFLE_DISTANCE = 120        # ...then walks this far away from the cursor...
-SHUFFLE_SPEED = 90            # ...this slowly (pixels per second)...
-SHUFFLE_FRAME_MS = 150        # ...with its run played slowly (there is no walk), and naps again
+SHUFFLE_SPEED = 53            # ...this slowly (pixels per second)...
+SHUFFLE_FRAME_MS = 150        # ...with its walk played slowly to match, and naps again
 
 # Training on the dummy
 TRAIN_CHANCE = 0.4            # chance of training instead of wandering, after idling
@@ -146,6 +148,8 @@ CLIMB_RANGE = 700             # ...and at most this far to either side
 CLIMB_OVERSHOOT = 40          # it jumps this much higher than the window top, to land on it
 STAY_CHANCE = 0.6             # on a window, chance of wandering along it (else anywhere: maybe off it)
 WALK_OFF_SPEED = 120          # sideways speed it keeps as it walks off the edge of a window
+SIT_CHANCE = 0.3              # on a window, chance of going to sit on one of its edges instead of wandering
+SIT_SECONDS = (6.0, 15.0)     # how long it sits there, legs dangling (min, max)
 
 # The lantern's light (see light.py)
 LIGHT_RADIUS = 16             # sprite pixels from the lantern to the edge of its glow
@@ -234,7 +238,12 @@ ANIMATIONS = {
     "ledge_grab":  ("Ledge Grab.png",  140, True),
     "ledge_climb": ("Ledge Climb.png",  70, False),
     "celebrate":   ("Celebrate.png",    80, False),
+    "walk":        ("Walk.png",        105, True),
+    "sit_down":    ("Sit Down.png",     90, False),
+    "stand_up":    ("Sit Down.png",     90, False),   # sitting down, played backwards
+    "sit":         ("Sit.png",         150, True),
 }
+REVERSED = {"stand_up"}       # animations whose sheet plays backwards
 USED = tuple(ANIMATIONS)
 
 
@@ -301,7 +310,8 @@ def fullscreen_app_open():
 
 
 def missing_sprites():
-    return [file for file, _, _ in ANIMATIONS.values() if not (SPRITES / file).exists()]
+    files = dict.fromkeys(file for file, _, _ in ANIMATIONS.values())
+    return [file for file in files if not (SPRITES / file).exists()]
 
 
 def raw_frames(file):
@@ -311,8 +321,9 @@ def raw_frames(file):
 
 
 def sheet_frames(name):
-    """The frames of animation `name`, uncropped."""
-    return raw_frames(ANIMATIONS[name][0])
+    """The frames of animation `name`, uncropped (in the order they play)."""
+    frames = raw_frames(ANIMATIONS[name][0])
+    return frames[::-1] if name in REVERSED else frames
 
 
 def union_bbox(frames):
@@ -427,6 +438,14 @@ def slash_reach(box):
         frames = raw_frames(ANIMATIONS[name][0])
         reach += [solid_mask(frames[i]).getbbox()[2] - 1 - center for i in picks]
     return min(reach)
+
+
+def sit_edge(frame, ground):
+    """Sitting on the edge of a window (`frame`, uncropped, facing right), the
+    column where the window's side is: the first one of what hangs below its seat
+    (its legs, the hem of its cloak). `ground` is the row its feet stand on."""
+    below = solid_mask(frame).crop((0, ground, frame.width, frame.height)).getbbox()
+    return below[0]
 
 
 def fill_gaps(values, fallback):
@@ -687,6 +706,9 @@ class Capu:
         # stand on the window: how far (screen pixels, facing right), from its nose.
         (ix, iy), (gx, gy) = (nose_at(sheet_frames(n)[0]) for n in ("idle", "ledge_grab"))
         self.hang_shift = ((gx - ix) * SCALE, (gy - iy) * SCALE)
+        # Sitting on the edge of a window, its legs hang past the window's side:
+        # how far that side is from its body center (screen pixels).
+        self.sit_reach = (sit_edge(sheet_frames("sit")[0], ground) - (box[0] + box[2]) / 2) * SCALE
         for name in ANIMATIONS:
             frames = animation_frames(name, box)
             self.head_offsets[name] = fill_gaps([head_offset(f) for f in frames], idle_offset)
@@ -706,7 +728,12 @@ class Capu:
         self.light_spot = None                    # (x, y, strength) of its light on the screen now
         self.flicker = self.flicker_to = 1.0      # how much the flame's light wavers now / next
         self.next_flicker = 0.0
+        # Its own dice: the flame flickers on the clock, and that mustn't change
+        # what comes out of the ones everything else uses (same seed, same choices).
+        self.flicker_rng = random.Random()
         self.next_raise = 0.0                     # when to put its light back in front of it
+        self.sit_left = 0.0                       # how much longer it sits on the edge of a window
+        self.sit_facing = 1                       # ...and which one (1: its right edge, -1: its left)
         self.impact_done = True                   # only a fresh throw can hit the dummy
         self.celebrate_pending = False
 
@@ -727,7 +754,7 @@ class Capu:
         # Hanging and climbing it is drawn away from where it stands: those get their own.
         idle_frames = [f.crop(box) for f in raw_frames(ANIMATIONS["idle"][0])]
         self.hit_shapes = {None: {facing: hit_shape(idle_frames, facing) for facing in (1, -1)}}
-        for name in ("ledge_grab", "ledge_climb"):
+        for name in ("ledge_grab", "ledge_climb", "sit_down", "sit", "stand_up"):
             frames = animation_frames(name, box)
             self.hit_shapes[name] = {facing: hit_shape(frames, facing) for facing in (1, -1)}
         self.hitbox = ui.hit_zone(master)
@@ -924,13 +951,14 @@ class Capu:
             if not self.on_cursor:
                 self.alert.show(self.head_top)
             self.on_cursor = True
-        elif state in ("run", "train", "celebrate", "flee", "climb") or (state == "idle" and idle_seconds is None):
+        elif (state in ("run", "train", "celebrate", "flee", "climb", "to_edge", "sit")
+              or (state == "idle" and idle_seconds is None)):
             self.on_cursor = False
         if state in ("chase", "flee", "run", "jump", "dodge", "evade", "doze", "groggy", "shuffle",
-                     "climb", "leap", "falling"):
+                     "climb", "leap", "falling", "to_edge", "sit"):
             self.training = False            # the cursor or a wander interrupts training
         if state in ("idle", "run"):
-            self.set_anim(state, restart=True)
+            self.set_anim("walk" if state == "run" else state, restart=True)   # it wanders walking
         # A short pause (after a swing or a jump): it keeps still and doesn't react.
         self.pausing = state == "idle" and idle_seconds is not None
         if state == "idle":
@@ -967,6 +995,10 @@ class Capu:
             self.target = (self.takeoff_x(self.climb_to) if self.climb_plan[0] == "leap"
                            else self.climb_plan[1])
             self.set_anim("run")
+        elif state == "to_edge":
+            self.set_anim("walk")            # to the edge on the sit_facing side (see sit_spot)
+        elif state == "sit":
+            self.set_anim("sit_down", restart=True)
         elif state in ("leap", "falling"):
             self.set_anim("jump" if self.vy > 0 else "fall", restart=True)
         elif state == "air_attack":
@@ -985,6 +1017,7 @@ class Capu:
             on_lo, on_hi = max(lo, left + self.body_half), min(hi, right - self.body_half)
             if on_lo < on_hi:
                 lo, hi = on_lo, on_hi
+        lo, hi = max(lo, self.x - MAX_WANDER), min(hi, self.x + MAX_WANDER)
         options = [x for x in (random.uniform(lo, hi) for _ in range(20))
                    if abs(x - self.x) >= MIN_RUN_DISTANCE]
         self.target = options[0] if options else (lo if self.x > (lo + hi) / 2 else hi)
@@ -1017,7 +1050,7 @@ class Capu:
             away = -away
         self.turn(away)                      # turns where it stands...
         self.target = min(max(self.x + away * SHUFFLE_DISTANCE, lo), hi)   # ...and walks off
-        self.set_anim("run", restart=True, frame_ms=SHUFFLE_FRAME_MS)
+        self.set_anim("walk", restart=True, frame_ms=SHUFFLE_FRAME_MS)
 
     def train_target(self):
         """Spot at the lantern's distance from the dummy, on the side Capu is on
@@ -1062,7 +1095,7 @@ class Capu:
         if self.state in EVADE_STATES and self.y == 0:
             self.check_incoming_dummy()
 
-        if self.state in ("run", "train", "climb") or (self.state == "idle" and not self.pausing):
+        if self.state in ("run", "train", "climb", "to_edge") or (self.state == "idle" and not self.pausing):
             # While calm, keep watch: if it sees the cursor, go after it (or flee).
             if self.sees_mouse(VISION_RANGE) is not None:
                 self.set_state(self.reaction())
@@ -1096,9 +1129,19 @@ class Capu:
                     self.swings_left = random.randint(*TRAIN_SWINGS)
                     self.set_state("attack", target="dummy")
         elif self.state == "run":
-            self.move_towards(self.target, RUN_SPEED, dt)
+            self.move_towards(self.target, WALK_SPEED, dt)
             if self.x == self.target:
                 self.set_state("idle")
+        elif self.state == "to_edge":
+            if self.platform_rect is None:
+                self.set_state("idle")
+                return
+            self.target = self.sit_x(self.sit_facing)    # (the window may be moving)
+            self.move_towards(self.target, WALK_SPEED, dt)
+            if self.x == self.target:            # at the edge, facing out of the window
+                self.set_state("sit")
+        elif self.state == "sit":
+            self.sit_step(dt)
         elif self.state == "chase":
             self.chase(dt)
         elif self.state == "dodge":
@@ -1153,11 +1196,15 @@ class Capu:
             # After a normal idle: sometimes train on the dummy, else wander.
             if not self.pausing:
                 ledge = self.ledge_to_climb() if random.random() < CLIMB_CHANCE else None
+                side = self.sit_spot() if random.random() < SIT_CHANCE else None
                 if self.dummy_in_range() and random.random() < TRAIN_CHANCE:
                     self.set_state("train")
                 elif ledge is not None:
                     self.climb_to = ledge
                     self.set_state("climb")
+                elif side is not None:
+                    self.sit_facing = side
+                    self.set_state("to_edge")
                 else:
                     self.set_state("run")
             elif self.sees_mouse(VISION_RANGE) is not None:
@@ -1168,6 +1215,44 @@ class Capu:
             else:
                 self.training = False
                 self.set_state("idle")
+
+    def sit_x(self, facing):
+        """Where it sits on the edge of its window that is on the `facing` side."""
+        left, _, right, _ = self.platform_rect
+        return (right if facing == 1 else left) - facing * self.sit_reach
+
+    def sit_spot(self):
+        """Which edge of the window it stands on it would go and sit on: the side
+        (1: right, -1: left), or None.
+
+        It sits facing out of the window, with its legs hanging past the window's
+        side, so it only goes to an edge it walks towards (it gets there facing
+        out). The edge has to be a real one, not covered by a window in front, and
+        on the screen."""
+        if self.platform is None or self.platform_rect is None or not self.grounded():
+            return None
+        left, _, right, _ = self.platform_rect
+        lo, hi = self.bounds()
+        spots = []
+        for facing in (1, -1):
+            x = self.sit_x(facing)
+            ahead = (x - self.x) * facing
+            if not lo <= x <= hi or ahead < self.sit_reach:
+                continue
+            if any(hwnd == self.platform and abs(height - self.y) <= 2 and l <= x <= r
+                   and (r >= right - 1 if facing == 1 else l <= left + 1)
+                   for height, l, r, hwnd in self.ledges):
+                spots.append(facing)
+        return random.choice(spots) if spots else None
+
+    def sit_step(self, dt):
+        """Sitting on the edge: legs dangling until its while there is over or it
+        sees the cursor; then it gets up (see animation_finished)."""
+        if self.anim != "sit":
+            return                               # still sitting down, or getting up
+        self.sit_left -= dt
+        if self.sit_left <= 0 or self.sees_mouse(VISION_RANGE) is not None:
+            self.set_anim("stand_up", restart=True)
 
     def groggy_step(self, dt):
         # Dazed: it looks one way, then the other...
@@ -1235,6 +1320,11 @@ class Capu:
             self.set_state("idle", idle_seconds=JUMP_PAUSE)   # up on the window
         elif self.state == "celebrate":
             self.set_state("idle")
+        elif self.state == "sit" and self.anim == "sit_down":
+            self.set_anim("sit")                     # sat down: legs dangling for a while
+            self.sit_left = random.uniform(*SIT_SECONDS)
+        elif self.state == "sit":
+            self.set_state("idle")                   # got up: idle (it may go for the cursor right away)
         elif self.anim == "wall_jump" and self.state == "parkour":
             self.set_anim("jump" if self.vy > 0 else "fall")
         elif self.state == "dead" and not self.closing:
@@ -1643,7 +1733,7 @@ class Capu:
             return
         if self.state in ("hurt", "dead"):
             return                           # already being carried down (see knocked)
-        walking = self.state in ("run", "chase", "flee", "dodge", "shuffle", "train", "climb")
+        walking = self.state in ("run", "chase", "flee", "dodge", "shuffle", "train", "climb", "to_edge")
         self.vx = self.facing * WALK_OFF_SPEED if walking else 0.0
         self.vy = 0.0
         self.set_state("falling")
@@ -2254,7 +2344,7 @@ class Capu:
         """How strong its lantern shines now: by what it is doing, wavering like a flame."""
         now = time.perf_counter()
         if now >= self.next_flicker:
-            self.flicker_to = random.uniform(1 - LIGHT_FLICKER, 1 + LIGHT_FLICKER / 3)
+            self.flicker_to = self.flicker_rng.uniform(1 - LIGHT_FLICKER, 1 + LIGHT_FLICKER / 3)
             self.next_flicker = now + LIGHT_FLICKER_MS / 1000
         self.flicker += (self.flicker_to - self.flicker) * 0.35
         return min(1.0, LIGHT_STATES.get(self.state, LIGHT_STRENGTH) * self.flicker)

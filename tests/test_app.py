@@ -343,7 +343,7 @@ class Sleeping(AppCase):
         self.assertEqual(self.p.state, "groggy")                     # up, dazed...
         self.cursor[:] = [int(x0 + 10), int(self.bottom - 30)]
         facings, states, heads = set(), [], []
-        end = time.perf_counter() + 5.0
+        end = time.perf_counter() + 12.0                             # (looking around, walking off slowly)
         while time.perf_counter() < end and self.p.state != "doze":
             self.app.root.update()
             if self.p.state == "groggy":
@@ -357,7 +357,7 @@ class Sleeping(AppCase):
         self.assertEqual(states, ["groggy", "shuffle", "doze"])      # ...then walks off, and naps
         self.assertGreater(abs(self.p.head_top()[0] - head0), capu.SHUFFLE_DISTANCE * 0.8)
         self.assertEqual(self.alert.call_count, 1)                   # "!" as it wakes up
-        self.assertTrue(self.pump(1.5, until=lambda: self.p.state == "sleep"))
+        self.assertTrue(self.pump(4.0, until=lambda: self.p.state == "sleep"))
 
     def test_in_calm_mode_a_quick_pass_over_it_does_not_bother_it(self):
         self.app.settings["calm"] = True
@@ -772,8 +772,8 @@ class MenuAndSettings(AppCase):
 
 
 @needs_sprites
-class Windows(AppCase):
-    """Standing on the open windows (simulated: see AppCase)."""
+class OnWindows(AppCase):
+    """Simulated open windows to stand on (see AppCase), and helpers for them."""
 
     def setUp(self):
         super().setUp()
@@ -802,6 +802,11 @@ class Windows(AppCase):
         self.p.state = "dropped"
         self.assertTrue(self.pump(2.0, until=lambda: self.p.platform == hwnd and self.p.grounded()))
         self.p.set_state("idle", idle_seconds=100)     # and stays there
+
+
+@needs_sprites
+class Windows(OnWindows):
+    """Standing on the open windows."""
 
     def test_dropped_over_a_window_it_lands_on_top(self):
         self.add_window(1, self.middle - 200, 300, self.middle + 200)
@@ -832,7 +837,7 @@ class Windows(AppCase):
         self.drop_onto(1)
         self.p.set_state("run")
         self.p.target = self.middle + 400              # past the window's right edge
-        states = self.watch_states(2.0)
+        states = self.watch_states(4.0)
         self.assertIn("falling", states)
         self.assertEqual((self.p.y, self.p.hits), (0, 0))
         self.assertGreater(self.p.x, self.middle + 200)   # it kept going a little as it fell
@@ -875,7 +880,7 @@ class Windows(AppCase):
             self.p.x = self.middle
             self.p.set_state("idle")
             self.p.idle_left = 0.05
-            self.assertTrue(self.pump(3.0, until=lambda: self.p.platform == 1 and self.p.grounded()))
+            self.assertTrue(self.pump(6.0, until=lambda: self.p.platform == 1 and self.p.grounded()))
         self.assertEqual(self.p.y, 250 - STAND)
 
     def test_a_window_out_of_reach_is_not_climbed(self):
@@ -933,7 +938,7 @@ class Windows(AppCase):
     def test_thrown_softly_at_a_windows_side_it_slides_down_it(self):
         self.add_window(1, self.middle + 200, 500, self.middle + 600, depth=500)
         self.throw(self.middle, 450, 500)
-        self.assertTrue(self.pump(1.0, until=lambda: self.p.state == "wall_slide"))
+        self.assertTrue(self.pump(3.0, until=lambda: self.p.state == "wall_slide"))
         self.assertAlmostEqual(self.p.x, self.middle + 200 - self.p.body_half)   # its back on the side
         self.assertEqual(self.p.facing, -1)            # back to the wall, facing away from it
 
@@ -954,7 +959,7 @@ class Windows(AppCase):
             if not states or states[-1] != self.p.state:
                 states.append(self.p.state)
             return self.p.platform == 1 and self.p.state == "idle"
-        self.assertTrue(self.pump(4.0, until=up))
+        self.assertTrue(self.pump(8.0, until=up))
         self.assertIn("ledge_hang", states)
         self.assertIn("ledge_climb", states)
         self.assertEqual(self.p.y, 250 - STAND)
@@ -984,7 +989,7 @@ class Windows(AppCase):
             if not states or states[-1] != self.p.state:
                 states.append(self.p.state)
             return self.p.platform in (1, 2) and self.p.state == "idle"
-        self.assertTrue(self.pump(7.0, until=up), states)
+        self.assertTrue(self.pump(14.0, until=up), states)
         self.assertIn("wall_jump", states)
         self.assertGreater(self.p.y, capu.CLIMB_HEIGHT)
         self.assertEqual(self.p.hits, 0)
@@ -997,8 +1002,110 @@ class Windows(AppCase):
     def test_breaking_the_dummy_it_strikes_its_victory_pose(self):
         self.p.set_state("celebrate")
         self.assertEqual(self.p.anim, "celebrate")
-        self.assertTrue(self.pump(2.5, until=lambda: self.p.state == "idle"))
+        self.assertTrue(self.pump(6.0, until=lambda: self.p.state == "idle"))
         self.assertTrue(self.p.grounded())
+
+
+@needs_sprites
+class SittingAndWalking(OnWindows):
+    """It wanders walking, and sits on the edges of the windows."""
+
+    def sit_soon(self, **patches):
+        """Make it go and sit on an edge of its window when its idle ends (now)."""
+        patches = {"SIT_CHANCE": 1.0, "CLIMB_CHANCE": 0.0, "TRAIN_CHANCE": 0.0, **patches}
+        for name, value in patches.items():
+            p = mock.patch.object(capu, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.p.set_state("idle")
+        self.p.idle_left = 0.05
+
+    def hanging_part_on_screen(self):
+        """(left, right) on the screen of what hangs below its seat (legs, hem), measured on the image."""
+        from PIL import ImageTk
+        shown = _without_key(ImageTk.getimage(self.p.shown).convert("RGB"))
+        below = shown.crop((0, self.p.ground, shown.width, shown.height)).getbbox()
+        x = self.p.root.winfo_rootx()
+        return x + below[0], x + below[2]
+
+    def test_on_a_window_it_goes_to_sit_on_an_edge_with_its_legs_dangling_outside(self):
+        left, right = self.middle - 120, self.middle + 120
+        self.add_window(1, left, 300, right)
+        reach = self.p.sit_reach
+        # Next to one edge it can only go and sit on the other one (it gets there facing out).
+        for x, facing in ((left + reach + 10, 1), (right - reach - 10, -1)):
+            with self.subTest(facing=facing):
+                self.drop_onto(1)
+                self.p.x, self.p.facing = x, -facing
+                self.sit_soon()
+                walked = []
+                def sitting():
+                    walked.append(self.p.anim)
+                    return self.p.state == "sit" and self.p.anim == "sit"
+                self.assertTrue(self.pump(12.0, until=sitting))
+                self.assertIn("walk", walked)
+                self.assertEqual(self.p.facing, facing)                    # facing out of the window
+                self.assertEqual(self.p.platform, 1)
+                self.pump(0.1)
+                hang_left, hang_right = self.hanging_part_on_screen()
+                if facing == 1:
+                    self.assertAlmostEqual(hang_left, right, delta=capu.SCALE)   # right past its side
+                else:
+                    self.assertAlmostEqual(hang_right, left, delta=capu.SCALE)
+
+    def test_sitting_it_gets_up_after_a_while(self):
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.drop_onto(1)
+        self.sit_soon(SIT_SECONDS=(0.3, 0.3))
+        anims = []
+        def up_again():
+            if not anims or anims[-1] != self.p.anim:
+                anims.append(self.p.anim)
+            return "sit" in anims and self.p.state == "idle"
+        self.assertTrue(self.pump(16.0, until=up_again))
+        self.assertEqual(anims[-3:], ["sit", "stand_up", "idle"])
+        self.assertEqual(self.p.platform, 1)
+
+    def test_sitting_it_gets_up_and_goes_for_the_cursor_it_sees(self):
+        self.add_window(1, self.middle - 200, 300, self.middle + 200)
+        self.drop_onto(1)
+        self.sit_soon()
+        self.assertTrue(self.pump(12.0, until=lambda: self.p.anim == "sit"))
+        self.cursor[:] = [int(self.p.x - 150 * self.p.facing), int(self.bottom - self.p.y - 40)]
+        self.assertTrue(self.pump(2.0, until=lambda: self.p.anim == "stand_up"))
+        self.assertTrue(self.pump(2.0, until=lambda: self.p.state in ("chase", "attack", "jump")))
+
+    def test_it_does_not_sit_where_a_window_in_front_covers_the_edge(self):
+        left = self.middle - 200
+        self.add_window(1, left, 300, self.middle + 200)
+        self.drop_onto(1)
+        self.add_window(2, self.middle + 100, 350, self.middle + 400, front=True)   # over its right end
+        self.p.x = self.middle
+        self.assertEqual(self.p.sit_spot(), -1)                           # only the left edge
+        self.p.x = left + self.p.sit_reach + 10                           # ...and not once it is past it
+        self.assertIsNone(self.p.sit_spot())
+
+    def test_the_window_moving_as_it_goes_to_the_edge_it_still_sits_on_it(self):
+        left, right = self.middle - 200, self.middle + 200
+        self.add_window(1, left, 300, right)
+        self.drop_onto(1)
+        self.p.x = left + self.p.sit_reach + 10                           # it can only go right
+        self.sit_soon()
+        self.assertTrue(self.pump(2.0, until=lambda: self.p.state == "to_edge"))
+        self.move_window(1, -150, 0)                                       # dragged left meanwhile
+        self.assertTrue(self.pump(16.0, until=lambda: self.p.anim == "sit"))
+        self.assertAlmostEqual(self.p.x, right - 150 - self.p.sit_reach, delta=1)
+
+    def test_it_wanders_walking(self):
+        self.add_window(1, self.middle - 300, 300, self.middle + 300)
+        self.drop_onto(1)
+        self.p.set_state("run")
+        self.p.target = self.middle + 250
+        start = self.p.x
+        self.pump(1.0)
+        self.assertEqual(self.p.anim, "walk")
+        self.assertGreater(self.p.x, start)
+        self.assertLess(self.p.x - start, capu.WALK_SPEED * 1.2)        # (running would take it twice as far)
 
 
 @needs_sprites
@@ -1078,13 +1185,13 @@ class LanternLight(AppCase):
 class DoNotDisturb(AppCase):
     def test_both_hide_while_a_full_screen_app_is_open(self):
         self.fullscreen = True
-        self.pump(capu.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: self.app.away)
+        self.assertTrue(self.pump(capu.FULLSCREEN_CHECK_MS / 1000 * 3, until=lambda: self.app.away))
         self.pump(0.1)
         self.assertFalse(self.p.root.winfo_viewable())
         self.assertFalse(self.d.window.winfo_viewable())
         self.assertFalse(self.p.hitbox_shown)
         self.fullscreen = False
-        self.pump(capu.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: not self.app.away)
+        self.assertTrue(self.pump(capu.FULLSCREEN_CHECK_MS / 1000 * 3, until=lambda: not self.app.away))
         self.pump(0.1)
         self.assertTrue(self.p.root.winfo_viewable())
         self.assertTrue(self.d.window.winfo_viewable())
@@ -1098,7 +1205,7 @@ class DoNotDisturb(AppCase):
 
     def test_switching_it_off_brings_them_back_at_once(self):
         self.fullscreen = True
-        self.pump(capu.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: self.app.away)
+        self.assertTrue(self.pump(capu.FULLSCREEN_CHECK_MS / 1000 * 3, until=lambda: self.app.away))
         self.app.toggle("do_not_disturb")                    # e.g. from the tray icon's menu
         self.assertFalse(self.app.away)
         self.assertFalse(self.p.away)

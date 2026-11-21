@@ -345,6 +345,11 @@ def walk_to(x):
     p.facing = 1 if x > p.x else -1
 
 
+def sit_on_edge():
+    p.sit_facing = -1                            # window B's left edge, legs over the gap
+    p.set_state("to_edge")
+
+
 def walk_off():
     p.set_state("run")
     p.target = left + 680                        # past the window's right edge: off it
@@ -369,6 +374,10 @@ then(walk_off, when=lambda: p.platform == WIN_A and p.state == "idle", wait=500)
 then(hold_still, when=lambda: p.state == "idle" and p.platform is None and p.grounded())
 then(lambda: start_climb("parkour", WIN_B), wait=400)                  # up the gap, wall to wall
 then(hold_still, when=lambda: p.platform == WIN_B and p.state == "idle")
+then(lambda: walk_to(left + 1010), wait=300)                            # along the window...
+then(sit_on_edge, when=lambda: p.state == "idle" and abs(p.x - (left + 1010)) < 1, wait=300)
+then(lambda: None, when=lambda: p.anim == "stand_up")                   # ...sits on its edge a while
+then(hold_still, when=lambda: p.state == "idle")
 then(lambda: move_to(capu_body, 0.7), wait=300)                        # his hearts, up there
 then(lambda: finished.__setitem__(0, True), wait=1600)
 at(13200, run_steps)
@@ -377,6 +386,8 @@ at(13200, run_steps)
 def start():
     capu.CORNER_CHANCE = 1.0                     # up the gap, it ends hanging from the corner
     capu.CLIMB_CHANCE = 0.0                      # it only climbs when the script says so
+    capu.SIT_CHANCE = 0.0                        # ...and sits when it says so, not for long
+    capu.SIT_SECONDS = (2.6, 2.6)
     t0 = time.perf_counter()
     for ms, fn in timeline:
         app.root.after(ms, fn)
