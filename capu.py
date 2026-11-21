@@ -78,6 +78,8 @@ RUN_SPEED = 160               # pixels per second while running somewhere (to tr
 CHASE_SPEED = 260             # pixels per second while chasing the cursor
 IDLE_SECONDS = (2.0, 7.0)     # how long it stays idle (min, max)
 FIDGET_CHANCE = 0.4           # chance of a little gesture (a yawn, a look around...) in the middle of a rest
+UNDRESS_CHANCE = 0.025        # share of its gestures in which it takes its cloak off: under it is Capuchino
+UNDRESSED_SECONDS = (4.0, 7.0)  # ...and how long it stays like that before putting it back on
 MIN_RUN_DISTANCE = 150        # each wander is at least this long...
 MAX_WANDER = 600              # ...and at most this long, in pixels
 TICK_MS = 16                  # update rate (~60 fps)
@@ -220,6 +222,9 @@ TRAY_HEAD = 14                # sprite pixels of its head in the smallest icon (
 TRAY_SIZES = (16, 32, 48)
 
 SPRITES = Path(__file__).parent / "assets" / "capu" / "sprites"
+# Capuchino, the real rabbit Capu is named after: a photo of him, cut out, as tall as Capu at screen
+# resolution (see sprite-lab's tools/capuchino.py). Optional, and not in the repository.
+CAPUCHINO = Path(__file__).parent / "assets" / "capu" / "capuchino.png"
 
 # name: (file, milliseconds per frame, loops)
 ANIMATIONS = {
@@ -247,13 +252,19 @@ ANIMATIONS = {
     "look":        ("Look.png",        130, False),
     "polish":      ("Polish.png",      100, False),
     "twirl":       ("Twirl.png",        70, False),
+    "undress":     ("Undress.png",      90, False),   # it takes its cloak off: Capuchino is under it...
+    "undressed":   ("Undressed.png",   450, True),    # ...the cloak on the floor...
+    "dress":       ("Undress.png",      90, False),   # ...and it puts it back on (played backwards)
 }
+UNDRESS_REVEAL = 7            # Capuchino shows from this frame of Undress.png on (before, Capu is still in it)
+UNDRESS_ANIMS = ("undress", "undressed", "dress")
 # Little gestures it makes now and then while it rests (each starts and ends in its idle pose):
 # name -> how likely it is, against the others.
 FIDGETS = {"yawn": 2, "look": 2, "polish": 2, "twirl": 1}
 # Gestures that come after another one: it looks around before twirling its staff (nobody watching?).
 FIDGET_FIRST = {"twirl": "look"}
-REVERSED = {"stand_up"}       # animations whose sheet plays backwards
+FIDGET_ANIMS = (*FIDGETS, *UNDRESS_ANIMS)    # every one it can be making while it rests
+REVERSED = {"stand_up", "dress"}   # animations whose sheet plays backwards
 USED = tuple(ANIMATIONS)
 
 
@@ -369,6 +380,7 @@ def animation_frames(name, box):
 
 NOSE = (0xE9, 0xA3, 0xA3)     # Capu's pink nose: no other part of the sprites is that color
 NOSE_TO_TOP = 8               # rows from its nose up to the tips of its hood's ears
+HOOD_TO_NOSE = 2              # its nose is this far ahead of the middle of its hood (and its body)
 HOOD_HALF = 6                 # its hood spans this far to each side of the nose (13 px)
 
 
@@ -393,6 +405,51 @@ def nose_at(frame):
     """(x, y) of its nose in `frame`."""
     left, top, _ = nose(frame)
     return left + HOOD_HALF, top + NOSE_TO_TOP
+
+
+def load_capuchino():
+    """Capuchino (see CAPUCHINO), or None if his photo isn't there."""
+    try:
+        return Image.open(CAPUCHINO).convert("RGBA")
+    except OSError:
+        return None
+
+
+CLOTH = {(0x2C, 0x38, 0x5C), (0x22, 0x2B, 0x4A), (0x1D, 0x24, 0x3D)}   # its costume: cloth, shade, lining
+CLASP = (0xFA, 0xD0, 0x58)                                                # ...and its clasp
+
+
+def with_capuchino(frame, photo, scale, center_x, ground_y):
+    """`frame` (cropped, in sprite pixels) scaled up `scale` times with `photo`
+    (in screen pixels) on it: standing on the ground (row `ground_y` of the
+    frame) and centered on column `center_x`, where Capu's body was. Its costume
+    (the cloth, and the clasp on it) goes behind him: it slides off his back
+    like a hooded cape and lies on the floor behind him. The rest (the staff on
+    the floor in front, the lantern, the dust) goes in front."""
+    px = frame.load()
+    behind = Image.new("L", frame.size, 0)
+    bp = behind.load()
+    for y in range(frame.height):
+        for x in range(frame.width):
+            r, g, b, a = px[x, y]
+            if a < 128:
+                continue
+            color = (r, g, b)
+            next_to_cloth = any(0 <= x + dx < frame.width and 0 <= y + dy < frame.height
+                                and px[x + dx, y + dy][3] >= 128 and px[x + dx, y + dy][:3] in CLOTH
+                                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            if color in CLOTH or (color == CLASP and next_to_cloth):
+                bp[x, y] = 255
+    size = (frame.width * scale, frame.height * scale)
+    big = frame.resize(size, Image.NEAREST)
+    mask = behind.resize(size, Image.NEAREST)
+    out = Image.new("RGBA", size, (0, 0, 0, 0))
+    out.paste(big, (0, 0), mask)                                          # the costume, behind him
+    out.alpha_composite(photo, (round(center_x * scale - photo.width / 2), ground_y * scale - photo.height))
+    front = big.copy()
+    front.paste((0, 0, 0, 0), (0, 0), mask)
+    out.alpha_composite(front)                                            # the rest, in front
+    return out
 
 
 LANTERN_GLASS = {(0xFA, 0xD0, 0x58), (0xFF, 0xEE, 0xB2)}   # the flame and the lit glass
@@ -748,13 +805,26 @@ class Capu:
         self.sit_facing = 1                       # ...and which one (1: its right edge, -1: its left)
         self.fidget_at = None                     # resting: when it makes a little gesture (see idle_step)
         self.fidget_next = None                   # ...and the one that comes after the one it makes now
+        self.undressed_left = 0.0                 # ...out of its cloak: how much longer
         self.impact_done = True                   # only a fresh throw can hit the dummy
         self.celebrate_pending = False
 
-        # Frames facing right (original) and left (flipped).
+        # Frames facing right (original) and left (flipped). Out of its cloak,
+        # Capuchino stands where its body was (under its hood), if his photo is there.
+        self.capuchino = load_capuchino()
+        center_x = nose_at(idle_frame)[0] - HOOD_TO_NOSE
+        out_of_cloak = {"undress": lambda i: i >= UNDRESS_REVEAL, "undressed": lambda i: True,
+                        "dress": lambda i, n=len(animation_frames("dress", box)): n - 1 - i >= UNDRESS_REVEAL}
         self.frames = {}
         for name in ANIMATIONS:
             raw = animation_frames(name, box)
+            if name in out_of_cloak and self.capuchino is not None:
+                big = [with_capuchino(f, self.capuchino, SCALE, center_x, ground - box[1])
+                       if out_of_cloak[name](i) else f.resize((f.width * SCALE, f.height * SCALE), Image.NEAREST)
+                       for i, f in enumerate(raw)]
+                self.frames[name] = {1: [to_photo(f, 1) for f in big],
+                                     -1: [to_photo(f.transpose(Image.FLIP_LEFT_RIGHT), 1) for f in big]}
+                continue
             self.frames[name] = {
                 1: [to_photo(f, SCALE) for f in raw],
                 -1: [to_photo(f.transpose(Image.FLIP_LEFT_RIGHT), SCALE) for f in raw],
@@ -1107,7 +1177,7 @@ class Capu:
         self.heal(now)
         self.track_mouse(now)
         self.ride()
-        if (self.state == "idle" and not self.pausing and self.grounded()
+        if (self.state == "idle" and not self.pausing and self.grounded() and self.anim not in UNDRESS_ANIMS
                 and now - max(self.last_mouse_move, self.last_hurt) >= SLEEP_AFTER):
             self.set_state("doze")               # nothing has happened for a while: nap
         if self.state in EVADE_STATES and self.y == 0:
@@ -1115,8 +1185,12 @@ class Capu:
 
         if self.state in ("run", "train", "climb", "to_edge") or (self.state == "idle" and not self.pausing):
             # While calm, keep watch: if it sees the cursor, go after it (or flee).
+            # Out of its cloak, it puts it back on first (then it goes).
             if self.sees_mouse(VISION_RANGE) is not None:
-                self.set_state(self.reaction())
+                if self.anim == "undressed":
+                    self.set_anim("dress", restart=True)
+                elif self.anim not in UNDRESS_ANIMS:
+                    self.set_state(self.reaction())
 
         self.act(now, dt)
         if self.pressed and self.state != "held":
@@ -1208,12 +1282,20 @@ class Capu:
     def idle_step(self, dt):
         """Standing still, until its rest (or its short pause) is over. Partway
         through, now and then, a little gesture: the rest waits for it to end."""
-        if self.anim in FIDGETS:
+        if self.anim == "undressed":             # out of its cloak, for a while
+            self.undressed_left -= dt
+            if self.undressed_left <= 0:
+                self.set_anim("dress", restart=True)
+            return
+        if self.anim in FIDGET_ANIMS:
             return                               # see animation_finished
         self.idle_left -= dt
         if self.fidget_at is not None and self.idle_left <= self.fidget_at:
             self.fidget_at = None
-            self.start_fidget(random.choices(list(FIDGETS), weights=list(FIDGETS.values()))[0])
+            name = random.choices(list(FIDGETS), weights=list(FIDGETS.values()))[0]
+            if self.capuchino is not None and random.random() < UNDRESS_CHANCE:
+                name = "undress"                 # once in a long while: off with the cloak, and there's Capuchino
+            self.start_fidget(name)
             return
         if self.idle_left <= 0:
             # After a short pause, go back to the cursor if it is still in
@@ -1316,7 +1398,10 @@ class Capu:
 
     def animation_finished(self):
         """A one-off animation (a swing, a flinch, slumping, dying) has played out."""
-        if self.state == "idle" and self.anim in FIDGETS:
+        if self.state == "idle" and self.anim == "undress":
+            self.set_anim("undressed")               # its cloak on the floor: Capuchino, for a while
+            self.undressed_left = random.uniform(*UNDRESSED_SECONDS)
+        elif self.state == "idle" and self.anim in FIDGET_ANIMS:
             if self.fidget_next is not None:         # the gesture that came first is over: now the other
                 self.set_anim(self.fidget_next, restart=True)
                 self.fidget_next = None

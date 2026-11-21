@@ -188,9 +188,17 @@ The sprites are **not** in this repository. To run it:
 3. *(Optional, for the pixel-art menu)* Copy the **Nanofon** pixel font to
    `assets/ui/Nanofon.ttf`. The menu's buttons and the hearts are drawn by
    the program itself, so nothing else is needed.
+4. *(Optional, a little secret)* A photo of Capuchino, the real rabbit Capu
+   is named after, cut out of its background, as `assets/capu/capuchino.png`
+   (made from a photo with sprite-lab's `tools/capuchino.py`: as tall as
+   Capu, at screen resolution). Once in a long while, Capu lays its staff
+   down on the floor, undoes its clasp and lets its hooded cape slide off its
+   back to the floor: under it is Capuchino. A few seconds later it puts it
+   back on. Without the photo, nothing changes.
 ```
 assets/
 ├── capu/
+│   ├── capuchino.png   (optional)
 │   └── sprites/
 │       ├── Attack 1.png
 │       ├── Attack 2.png
@@ -211,6 +219,8 @@ assets/
 │       ├── Sit.png
 │       ├── Sleep.png
 │       ├── Twirl.png
+│       ├── Undress.png
+│       ├── Undressed.png
 │       ├── Walk.png
 │       ├── Wall Jump.png
 │       ├── Wall Slide.png
@@ -291,6 +301,7 @@ The constants at the top of `capu.py` control its behavior:
 | `IDLE_SECONDS` | How long it idles before wandering |
 | `FIDGET_CHANCE`, `FIDGETS` | How often a rest has a little gesture in it, and how likely each one is against the others (a yawn, a look around, polishing its lantern, twirling its staff) |
 | `FIDGET_FIRST` | Gestures that come after another one (before twirling its staff it looks around) |
+| `UNDRESS_CHANCE`, `UNDRESSED_SECONDS` | How often one of its gestures is taking its cloak off (only with `assets/capu/capuchino.png`), and how long it stays out of it |
 | `MIN_RUN_DISTANCE`, `MAX_WANDER` | How short and how long each wander is |
 | `VISION_RANGE`, `VISION_HEIGHT` | How far it can see the cursor |
 | `ATTACK_REACH`, `ATTACK_HEIGHT`, `SLASH_CENTER` | How far and how high the lantern's swing reaches, and where it aims |

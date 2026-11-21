@@ -111,6 +111,76 @@ class Resting(AppCase):
         self.assertEqual(anims, ["idle", "look", "twirl", "idle"])
         self.assertEqual((self.p.state, self.p.x), ("idle", x))
 
+    def gesture_anims(self):
+        """The animations it goes through over one rest with a gesture in it."""
+        self.rest()
+        anims = []
+        def done():
+            if not anims or anims[-1] != self.p.anim:
+                anims.append(self.p.anim)
+            return anims[-1] == "idle" and len(anims) > 1
+        self.assertTrue(self.pump(8.0, until=done))
+        return anims
+
+    def capuchino(self):
+        """A stand-in for Capuchino's photo (red, as tall as Capu), and the frames made with it."""
+        from PIL import Image
+        photo = Image.new("RGBA", (52, 84), (255, 0, 0, 255))
+        box, _, ground = capu.crop_box()
+        return photo, box, ground
+
+    def test_once_in_a_long_while_it_takes_its_cloak_off_and_puts_it_back_on(self):
+        self.gesture("yawn", UNDRESS_CHANCE=1.0, UNDRESSED_SECONDS=(0.4, 0.4))
+        self.p.capuchino = self.capuchino()[0]
+        self.assertEqual(self.gesture_anims(), ["idle", "undress", "undressed", "dress", "idle"])
+        self.assertEqual(self.p.state, "idle")
+
+    def test_without_capuchinos_photo_it_keeps_its_cloak_on(self):
+        self.gesture("yawn", UNDRESS_CHANCE=1.0)
+        self.p.capuchino = None
+        self.assertEqual(self.gesture_anims(), ["idle", "yawn", "idle"])
+
+    def test_out_of_its_cloak_it_puts_it_back_on_before_going_for_the_cursor(self):
+        self.gesture("yawn", UNDRESS_CHANCE=1.0, UNDRESSED_SECONDS=(30.0, 30.0))
+        self.p.capuchino = self.capuchino()[0]
+        self.rest()
+        self.assertTrue(self.pump(4.0, until=lambda: self.p.anim == "undressed"))
+        self.cursor[:] = [int(self.p.x + 300), int(self.bottom - 60)]
+        seen = []
+        def chasing():
+            if not seen or seen[-1] != (self.p.state, self.p.anim):
+                seen.append((self.p.state, self.p.anim))
+            return self.p.state == "chase"
+        self.assertTrue(self.pump(4.0, until=chasing))
+        self.assertIn(("idle", "dress"), seen)                  # dressed first
+
+    def test_capuchino_stands_where_its_body_was_in_front_of_his_costume(self):
+        from PIL import Image
+        photo, box, ground = self.capuchino()
+        frame = capu.animation_frames("undressed", box)[0]   # its costume behind, its staff on the floor
+        scale, ground_y = capu.SCALE, ground - box[1]
+        center = capu.nose_at(capu.animation_frames("idle", box)[0])[0] - capu.HOOD_TO_NOSE
+        out = capu.with_capuchino(frame, photo, scale, center, ground_y)
+        plain = frame.resize((frame.width * scale, frame.height * scale), Image.NEAREST)
+        red = (255, 0, 0, 255)
+        x0, y0 = round(center * scale - photo.width / 2), ground_y * scale - photo.height
+        self.assertEqual(out.getpixel((x0 + photo.width // 2, y0)), red)        # standing on the ground,
+        self.assertEqual(out.getpixel((x0 + photo.width // 2, y0 - 1))[:3] != red[:3], True)
+        costume = rest = 0                                                     # ...where its body was
+        for y in range(y0, y0 + photo.height):
+            for x in range(x0, x0 + photo.width):
+                before = plain.getpixel((x, y))
+                if before[3] < 128:
+                    continue
+                if before[:3] in capu.CLOTH:
+                    self.assertEqual(out.getpixel((x, y)), red)               # its costume, behind him
+                    costume += 1
+                elif before[:3] != capu.CLASP:
+                    self.assertEqual(out.getpixel((x, y)), before)            # its staff, in front
+                    rest += 1
+        self.assertGreater(costume, 0)
+        self.assertGreater(rest, 0)
+
     def test_twirling_is_the_least_likely_gesture(self):
         weights = capu.FIDGETS
         self.assertLess(weights["twirl"], min(w for name, w in weights.items() if name != "twirl"))
