@@ -378,6 +378,8 @@ then(lambda: walk_to(left + 1010), wait=300)                            # along 
 then(sit_on_edge, when=lambda: p.state == "idle" and abs(p.x - (left + 1010)) < 1, wait=300)
 then(lambda: None, when=lambda: p.anim == "stand_up")                   # ...sits on its edge a while
 then(hold_still, when=lambda: p.state == "idle")
+then(lambda: p.set_anim("twirl", restart=True), wait=400)               # a twirl of its staff
+then(lambda: None, when=lambda: p.anim == "idle")
 then(lambda: move_to(capu_body, 0.7), wait=300)                        # his hearts, up there
 then(lambda: finished.__setitem__(0, True), wait=1600)
 at(13200, run_steps)
@@ -388,6 +390,7 @@ def start():
     capu.CLIMB_CHANCE = 0.0                      # it only climbs when the script says so
     capu.SIT_CHANCE = 0.0                        # ...and sits when it says so, not for long
     capu.SIT_SECONDS = (2.6, 2.6)
+    capu.FIDGET_CHANCE = 0.0                     # its little gestures: only the one the script asks for
     t0 = time.perf_counter()
     for ms, fn in timeline:
         app.root.after(ms, fn)

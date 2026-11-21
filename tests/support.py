@@ -103,6 +103,7 @@ class AppCase(unittest.TestCase):
                               lambda hwnd: next((r for h, r, ok in self.simulated_windows()
                                                  if h == hwnd and ok), None)),
             mock.patch.object(capu, "CLIMB_CHANCE", 0.0),         # it climbs only when a test says so
+            mock.patch.object(capu, "FIDGET_CHANCE", 0.0),        # ...and fidgets only when one says so
             mock.patch.object(capu, "SETTINGS_FILE", Path(self.tmp.name) / "settings.json"),
             mock.patch.object(ui, "CURSOR_DIR", Path(self.tmp.name) / "cursors"),
             mock.patch.object(ui, "_cursors", None),

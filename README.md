@@ -6,7 +6,7 @@ A small desktop pet for Windows, written in Python with Tkinter. Capu lives on
 your taskbar, hunts your mouse cursor with the lantern it carries on its staff
 and trains on a dummy.
 
-![Capu chasing the cursor, the dummy being hit and thrown, Capu dodging it and getting hit back, breaking the dummy and celebrating, sliding down a window's side, climbing a window by its corner, going up a gap between two windows wall to wall and sitting on a window's edge, legs dangling](docs/demo.gif)
+![Capu chasing the cursor, the dummy being hit and thrown, Capu dodging it and getting hit back, breaking the dummy and celebrating, sliding down a window's side, climbing a window by its corner, going up a gap between two windows wall to wall and sitting on a window's edge, then twirling its staff](docs/demo.gif)
 
 *Recorded from the program itself, with a simulated cursor
 (`tools/record_demo.py`). Dummy art by Mattz Art.*
@@ -16,6 +16,10 @@ and trains on a dummy.
 - **Wanders** along the bottom of the screen, standing on the taskbar: it
   idles for a few seconds, then walks to a spot nearby. It runs only when it
   has somewhere to be: to the dummy, to climb a window, after the cursor.
+  While it rests it now and then **yawns**, **looks around** over its
+  shoulder, **polishes its lantern** until it shines or, less often, takes
+  a look around (nobody watching?) and **twirls its staff**, planting it on
+  the ground.
 - **Trains** on the training dummy: now and then, when the dummy is close
   enough, Capu walks up to it and hits it a few times. Once in a while the
   dummy **hits back**: it swings on its post, takes half a heart from Capu
@@ -136,6 +140,9 @@ it; click anywhere else or press Escape to close it:
 - **Hide** or **show** each one, to have only one of them on the screen. A
   hidden dummy doesn't come back on its own.
 - **Sleep Capu** puts him to sleep right away (**Wake Capu** wakes him).
+  Taking the cursor away from the menu doesn't wake him; moving it off him
+  and touching him again does, as does taking it far away and bringing it
+  back.
   The cursor, right next to him after using the menu, doesn't wake him as it
   leaves; once it has gone away, bringing it back near does.
 - **Settings** opens the settings in the same spot; each one is switched on
@@ -197,13 +204,17 @@ assets/
 │       ├── Jump.png
 │       ├── Ledge Climb.png
 │       ├── Ledge Grab.png
+│       ├── Look.png
+│       ├── Polish.png
 │       ├── Run.png
 │       ├── Sit Down.png
 │       ├── Sit.png
 │       ├── Sleep.png
+│       ├── Twirl.png
 │       ├── Walk.png
 │       ├── Wall Jump.png
-│       └── Wall Slide.png
+│       ├── Wall Slide.png
+│       └── Yawn.png
 ├── dummy/
 │   └── sprites/
 │       ├── BREAKING.png
@@ -233,7 +244,7 @@ window; `python capu.py` also works.
 python -m unittest
 ```
 
-It runs every test in `tests/` (about a minute and a half), with nothing to install:
+It runs every test in `tests/` (a few minutes), with nothing to install:
 
 - `test_physics.py`: throwing, falling, bouncing and the click-or-drag rule.
 - `test_platforms.py`: which parts of the windows' tops Capu can stand on, and which parts of their sides are walls.
@@ -242,7 +253,7 @@ It runs every test in `tests/` (about a minute and a half), with nothing to inst
 - `test_ui.py`: the menu, hearts, the "!", "?" and "Z", text and cursors.
 - `test_app.py`: Capu and the dummy together (and the tray icon): walking on
   windows and sitting on their edges, chasing and calm mode,
-  dozing off and waking up, the
+  resting and its little gestures, dozing off and waking up, the
   mid-air swing, dodging and knockback, the dummy hitting back, where the
   impacts land, the hearts, the cursors, the menu and settings, and do not
   disturb.
@@ -278,6 +289,8 @@ The constants at the top of `capu.py` control its behavior:
 | `SCALE` | Size of the character on screen |
 | `WALK_SPEED`, `RUN_SPEED`, `CHASE_SPEED` | Speed when wandering (walking: its steps match it), when running somewhere (to the dummy, to climb) and when chasing |
 | `IDLE_SECONDS` | How long it idles before wandering |
+| `FIDGET_CHANCE`, `FIDGETS` | How often a rest has a little gesture in it, and how likely each one is against the others (a yawn, a look around, polishing its lantern, twirling its staff) |
+| `FIDGET_FIRST` | Gestures that come after another one (before twirling its staff it looks around) |
 | `MIN_RUN_DISTANCE`, `MAX_WANDER` | How short and how long each wander is |
 | `VISION_RANGE`, `VISION_HEIGHT` | How far it can see the cursor |
 | `ATTACK_REACH`, `ATTACK_HEIGHT`, `SLASH_CENTER` | How far and how high the lantern's swing reaches, and where it aims |

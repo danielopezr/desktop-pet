@@ -77,6 +77,7 @@ WALK_SPEED = 76               # pixels per second while wandering: its walk (eac
 RUN_SPEED = 160               # pixels per second while running somewhere (to train, to climb)
 CHASE_SPEED = 260             # pixels per second while chasing the cursor
 IDLE_SECONDS = (2.0, 7.0)     # how long it stays idle (min, max)
+FIDGET_CHANCE = 0.4           # chance of a little gesture (a yawn, a look around...) in the middle of a rest
 MIN_RUN_DISTANCE = 150        # each wander is at least this long...
 MAX_WANDER = 600              # ...and at most this long, in pixels
 TICK_MS = 16                  # update rate (~60 fps)
@@ -242,7 +243,16 @@ ANIMATIONS = {
     "sit_down":    ("Sit Down.png",     90, False),
     "stand_up":    ("Sit Down.png",     90, False),   # sitting down, played backwards
     "sit":         ("Sit.png",         150, True),
+    "yawn":        ("Yawn.png",        110, False),
+    "look":        ("Look.png",        130, False),
+    "polish":      ("Polish.png",      100, False),
+    "twirl":       ("Twirl.png",        70, False),
 }
+# Little gestures it makes now and then while it rests (each starts and ends in its idle pose):
+# name -> how likely it is, against the others.
+FIDGETS = {"yawn": 2, "look": 2, "polish": 2, "twirl": 1}
+# Gestures that come after another one: it looks around before twirling its staff (nobody watching?).
+FIDGET_FIRST = {"twirl": "look"}
 REVERSED = {"stand_up"}       # animations whose sheet plays backwards
 USED = tuple(ANIMATIONS)
 
@@ -442,10 +452,12 @@ def slash_reach(box):
 
 def sit_edge(frame, ground):
     """Sitting on the edge of a window (`frame`, uncropped, facing right), the
-    column where the window's side is: the first one of what hangs below its seat
-    (its legs, the hem of its cloak). `ground` is the row its feet stand on."""
+    column where the window's side is: right after the first one of what hangs
+    below its seat. That first one is a fold of its cloak over the window's
+    corner (it covers the gap a rounded corner leaves); the rest hangs past the
+    side. `ground` is the row its feet stand on."""
     below = solid_mask(frame).crop((0, ground, frame.width, frame.height)).getbbox()
-    return below[0]
+    return below[0] + 1
 
 
 def fill_gaps(values, fallback):
@@ -734,6 +746,8 @@ class Capu:
         self.next_raise = 0.0                     # when to put its light back in front of it
         self.sit_left = 0.0                       # how much longer it sits on the edge of a window
         self.sit_facing = 1                       # ...and which one (1: its right edge, -1: its left)
+        self.fidget_at = None                     # resting: when it makes a little gesture (see idle_step)
+        self.fidget_next = None                   # ...and the one that comes after the one it makes now
         self.impact_done = True                   # only a fresh throw can hit the dummy
         self.celebrate_pending = False
 
@@ -786,6 +800,7 @@ class Capu:
         self.mouse_trail = CursorTrail()          # how fast the mouse is moving (sneaking up on it asleep)
         self.slept_at = 0.0
         self.wake_guard = False                   # put to sleep from the menu: see sleeping()
+        self.guard_off_body = False               # ...and the cursor has been off its body since
         self.nudged = 0.0                         # calm mode: how long the cursor has bothered it asleep
         self.shown = None
         self.anim = None
@@ -963,6 +978,9 @@ class Capu:
         self.pausing = state == "idle" and idle_seconds is not None
         if state == "idle":
             self.idle_left = idle_seconds if idle_seconds is not None else random.uniform(*IDLE_SECONDS)
+            # Sometimes, partway through a normal rest, a little gesture (see idle_step).
+            fidget = not self.pausing and self.idle_left > 1.5 and random.random() < FIDGET_CHANCE
+            self.fidget_at = random.uniform(0.5, self.idle_left - 1.0) if fidget else None
         elif state == "run":
             self.start_run()
         elif state in ("chase", "flee"):
@@ -1188,8 +1206,15 @@ class Capu:
             self.knocked(dt)                 # pushed by a hit, or falling if hit in the air
 
     def idle_step(self, dt):
-        """Standing still, until its rest (or its short pause) is over."""
+        """Standing still, until its rest (or its short pause) is over. Partway
+        through, now and then, a little gesture: the rest waits for it to end."""
+        if self.anim in FIDGETS:
+            return                               # see animation_finished
         self.idle_left -= dt
+        if self.fidget_at is not None and self.idle_left <= self.fidget_at:
+            self.fidget_at = None
+            self.start_fidget(random.choices(list(FIDGETS), weights=list(FIDGETS.values()))[0])
+            return
         if self.idle_left <= 0:
             # After a short pause, go back to the cursor if it is still in
             # sight, carry on training, or stay idle for a normal while.
@@ -1215,6 +1240,12 @@ class Capu:
             else:
                 self.training = False
                 self.set_state("idle")
+
+    def start_fidget(self, name):
+        """A little gesture where it rests (after the one that comes first, if any: see FIDGET_FIRST)."""
+        first = FIDGET_FIRST.get(name)
+        self.fidget_next = name if first else None
+        self.set_anim(first or name, restart=True)
 
     def sit_x(self, facing):
         """Where it sits on the edge of its window that is on the `facing` side."""
@@ -1285,7 +1316,13 @@ class Capu:
 
     def animation_finished(self):
         """A one-off animation (a swing, a flinch, slumping, dying) has played out."""
-        if self.state == "attack" and self.celebrate_pending:
+        if self.state == "idle" and self.anim in FIDGETS:
+            if self.fidget_next is not None:         # the gesture that came first is over: now the other
+                self.set_anim(self.fidget_next, restart=True)
+                self.fidget_next = None
+            else:
+                self.set_anim("idle", restart=True)  # its little gesture is over: back to resting
+        elif self.state == "attack" and self.celebrate_pending:
             self.celebrate_pending = False
             self.training = False
             self.set_state("celebrate")
@@ -1403,16 +1440,20 @@ class Capu:
             return
         self.set_state("doze")
         # The cursor is right next to it (the menu was opened on it): leaving
-        # mustn't wake it. It has to go away first; coming back then wakes it.
+        # mustn't wake it. It has to go away first, or come off its body and
+        # touch it again; then it wakes.
         self.wake_guard = True
+        self.guard_off_body = False
 
     def sleeping(self, now, dt):
         """Asleep: "Z"s float up until the cursor comes near again.
 
         Only a cursor that has moved since it fell asleep wakes it, and one
         that moves slowly (SNEAK_SPEED) sneaks up on it: that one wakes it only
-        when it touches its body. Put to sleep
-        from the menu, the cursor must first go away before coming near wakes it.
+        when it touches its body. Put to sleep from the menu, the cursor must
+        first go away before coming near wakes it, or come off its body and
+        touch it again (it may have been put to sleep in the middle of a fight,
+        with the cursor right there).
         In calm mode the cursor never wakes it (a hit, picking it up or "Wake
         Capu" in the menu still do), but rubbing it for a while bothers it:
         it gets up, looks around dazed, walks a little way off and naps again.
@@ -1429,9 +1470,16 @@ class Capu:
                 return
         near = (not self.app.settings["calm"]
                 and self.cursor_in_sight(VISION_RANGE, taskbar=True) is not None)
-        if self.wake_guard and not near:
-            self.wake_guard = False
-        noticed = self.cursor_over_body() or not self.cursor_sneaking()
+        over = self.cursor_over_body()
+        if self.wake_guard:
+            if not near:
+                self.wake_guard = False              # gone away: coming near wakes it as usual
+            elif not over:
+                self.guard_off_body = True           # off its body (off the menu, say)...
+            elif self.guard_off_body and self.last_mouse_move > self.slept_at:
+                self.wake()                          # ...and back on it: touched on purpose
+                return
+        noticed = over or not self.cursor_sneaking()
         if near and noticed and not self.wake_guard and self.last_mouse_move > self.slept_at:
             self.wake()
             return

@@ -61,6 +61,73 @@ class Basics(AppCase):
 
 
 @needs_sprites
+class Resting(AppCase):
+    """The little gestures it makes now and then while it rests."""
+
+    def rest(self, gesture_after=0.2):
+        """A normal rest (with the cursor out of sight) with a gesture in it, `gesture_after` seconds in."""
+        p = mock.patch.object(capu, "FIDGET_CHANCE", 1.0)
+        p.start()
+        self.addCleanup(p.stop)
+        self.cursor[:] = [0, 0]
+        lo, hi = self.p.bounds()
+        self.p.x = (lo + hi) / 2
+        self.p.set_state("idle")
+        self.p.idle_left, self.p.fidget_at = 3.0, 3.0 - gesture_after
+
+    def gesture(self, name, **patches):
+        """The gesture its rests will have (and anything else to patch while it makes it)."""
+        for target, value in [("choices", lambda options, weights: [name])] + list(patches.items()):
+            p = mock.patch.object(capu.random if target == "choices" else capu, target, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_now_and_then_it_makes_a_little_gesture_as_it_rests(self):
+        for gesture in capu.FIDGETS:
+            with self.subTest(gesture=gesture):
+                self.gesture(gesture)
+                self.rest()
+                x = self.p.x
+                self.assertTrue(self.pump(8.0, until=lambda: self.p.anim == gesture))   # (twirl: after a look)
+                states = set()
+                def done():
+                    states.add(self.p.state)
+                    return self.p.anim == "idle"
+                self.assertTrue(self.pump(5.0, until=done))
+                self.assertEqual(states, {"idle"})               # all of it, resting where it stands
+                self.assertEqual(self.p.x, x)
+                self.assertGreater(self.p.idle_left, 2.0)        # the rest waited for it
+
+    def test_before_twirling_its_staff_it_looks_around(self):
+        self.gesture("twirl")
+        self.rest()
+        x = self.p.x
+        anims = []
+        def done():
+            if not anims or anims[-1] != self.p.anim:
+                anims.append(self.p.anim)
+            return anims[-1] == "idle" and len(anims) > 1
+        self.assertTrue(self.pump(8.0, until=done))
+        self.assertEqual(anims, ["idle", "look", "twirl", "idle"])
+        self.assertEqual((self.p.state, self.p.x), ("idle", x))
+
+    def test_twirling_is_the_least_likely_gesture(self):
+        weights = capu.FIDGETS
+        self.assertLess(weights["twirl"], min(w for name, w in weights.items() if name != "twirl"))
+
+    def test_the_cursor_cuts_its_gesture_short(self):
+        self.rest()
+        self.assertTrue(self.pump(2.0, until=lambda: self.p.anim in capu.FIDGETS))
+        self.cursor[:] = [int(self.p.x + 300), int(self.bottom - 60)]
+        self.assertTrue(self.pump(1.0, until=lambda: self.p.state == "chase"))
+
+    def test_none_in_a_short_pause(self):
+        with mock.patch.object(capu, "FIDGET_CHANCE", 1.0):
+            self.p.set_state("idle", idle_seconds=3.0)           # (after a swing, a landing...)
+        self.assertIsNone(self.p.fidget_at)
+
+
+@needs_sprites
 class Cursor(AppCase):
     """Capu chasing (or not) the cursor."""
 
@@ -719,6 +786,18 @@ class MenuAndSettings(AppCase):
         self.cursor[:] = [int(self.p.x + 100), int(self.bottom - 40)]    # ...and back
         self.assertTrue(self.pump(1.0, until=lambda: not self.p.asleep()))
 
+    def test_put_to_sleep_in_the_middle_of_a_fight_touching_it_wakes_him(self):
+        self.park_capu(seconds=0.2)
+        self.cursor[:] = [int(self.p.x + 300), int(self.bottom - 60)]   # he comes after the cursor...
+        self.assertTrue(self.pump(4.0, until=lambda: self.p.state == "attack"))
+        self.p.sleep_now()                                              # ...and is put to sleep
+        self.assertTrue(self.pump(3.0, until=lambda: self.p.state == "sleep"))
+        self.cursor[:] = [int(self.p.x + 200), int(self.bottom - 60)]   # the cursor stays near, off him
+        self.pump(0.3)
+        self.assertTrue(self.p.asleep())
+        self.cursor_on_capu()                                           # and touches him
+        self.assertTrue(self.pump(1.0, until=lambda: not self.p.asleep()))
+
     def click_tray_icon(self, button=tray.WM_RBUTTONUP):
         """What Windows sends when the icon is clicked, with the cursor down on the taskbar."""
         self.cursor[:] = [600, self.bottom + 20]
@@ -1048,10 +1127,11 @@ class SittingAndWalking(OnWindows):
                 self.assertEqual(self.p.platform, 1)
                 self.pump(0.1)
                 hang_left, hang_right = self.hanging_part_on_screen()
+                # A fold of its cloak over the window's corner (one sprite pixel), the rest past its side.
                 if facing == 1:
-                    self.assertAlmostEqual(hang_left, right, delta=capu.SCALE)   # right past its side
+                    self.assertAlmostEqual(hang_left, right - capu.SCALE, delta=1)
                 else:
-                    self.assertAlmostEqual(hang_right, left, delta=capu.SCALE)
+                    self.assertAlmostEqual(hang_right, left + capu.SCALE, delta=1)
 
     def test_sitting_it_gets_up_after_a_while(self):
         self.add_window(1, self.middle - 200, 300, self.middle + 200)
