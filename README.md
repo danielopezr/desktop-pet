@@ -59,8 +59,7 @@ and trains on a dummy.
   hit, it also hops aside, startled, keeping its eyes on the cursor. In calm
   mode, rubbing the cursor over it for a couple of seconds bothers it: it
   wakes up ("!"), looks around dazed, walks a little way off and goes back to
-  sleep there. The pack has no sleeping
-  animation, so it uses the slumped frames from the death one.
+  sleep there.
 - **Walks on your windows**: now and then it goes up onto a window nearby,
   in one of three ways: it jumps straight onto its top; it jumps to one of its
   corners, **hangs** from it and **pulls itself up**; or, when there is a gap
@@ -75,6 +74,9 @@ and trains on a dummy.
 - **Celebrates** when one of its swings breaks the dummy: it jumps
   twirling its staff, lands and holds the lantern up like a trophy, beaming,
   among sparkles.
+- **Its lantern gives off light**: a warm glow lights up whatever is around
+  the lantern (Capu himself, the desktop, your windows), flickering like a flame. It shines
+  brighter as Capu swings or cheers, and dims as he dozes off and sleeps.
 - **Shows its health**: put the cursor over Capu and a row of hearts
   appears above its head. It has three, and each heart is two hits: the first
   turns it into a half heart, the second empties it.
@@ -144,6 +146,7 @@ it; click anywhere else or press Escape to close it:
   - **Dummy hits back** (on by default): the dummy sometimes hits Capu back.
   - **Walk on windows** (on by default): Capu climbs onto and walks on the
     open windows. Off, he stays on the taskbar.
+  - **Lantern light** (on by default): the glow around Capu's lantern.
 - **Exit** closes the program.
 
 The settings are saved in `%APPDATA%\Capu\settings.json`, so they are kept
@@ -165,11 +168,9 @@ of the program runs at a time.
 
 ## Sprites (not included)
 
-The sprites are **not** in this repository: the packs' licenses do not allow
-redistributing them. To get them:
+The sprites are **not** in this repository. To run it:
 
-1. Download the free **Luneblade – Little Axion** pack by Jesshiyoo from
-   <https://jesshiyoo.itch.io/> and copy its PNG sprite sheets into
+1. Put Capu's sprite sheets (the PNG files listed below) into
    `assets/capu/sprites/`.
 2. *(Optional, for the dummy)* Download the free **Training Dummy 2D Pixel
    Art** pack by Mattz Art from <https://xzany.itch.io/> and copy its
@@ -183,20 +184,20 @@ assets/
 │   └── sprites/
 │       ├── Attack 1.png
 │       ├── Attack 2.png
-│       ├── Celebrate.png  (optional)
+│       ├── Celebrate.png
 │       ├── Dash.png
 │       ├── Death.png
-│       ├── Doze.png       (optional)
+│       ├── Doze.png
 │       ├── Fall.png
 │       ├── Hurt.png
 │       ├── Idle.png
 │       ├── Jump.png
-│       ├── Ledge Climb.png (optional)
-│       ├── Ledge Grab.png (optional)
+│       ├── Ledge Climb.png
+│       ├── Ledge Grab.png
 │       ├── Run.png
-│       ├── Sleep.png      (optional)
-│       ├── Wall Jump.png  (optional)
-│       └── Wall Slide.png (optional)
+│       ├── Sleep.png
+│       ├── Wall Jump.png
+│       └── Wall Slide.png
 ├── dummy/
 │   └── sprites/
 │       ├── BREAKING.png
@@ -207,11 +208,7 @@ assets/
 ```
 
 If any of Capu's sprites is missing, it shows a message listing the missing
-files. `Doze.png` and `Sleep.png` (dozing off and sleeping) aren't in the pack:
-without them, those come from the frames of `Death.png` where it slumps with
-its eyes closed. The wall, corner and celebration sheets come only with
-Capu's own sprites: without them it bounces off the walls, only jumps
-straight onto windows and celebrates with a few hops. Without the dummy's sprites, Capu runs alone. Without the font, the menu
+files. Without the dummy's sprites, Capu runs alone. Without the font, the menu
 is the plain Windows one. The hearts and the cursors are drawn by the program
 itself, so they need no files.
 
@@ -234,6 +231,7 @@ It runs every test in `tests/` (about a minute and a half), with nothing to inst
 
 - `test_physics.py`: throwing, falling, bouncing and the click-or-drag rule.
 - `test_platforms.py`: which parts of the windows' tops Capu can stand on, and which parts of their sides are walls.
+- `test_light.py`: the lantern's glow: how it is drawn, and its window.
 - `test_settings.py`: saving and loading the settings.
 - `test_ui.py`: the menu, hearts, the "!", "?" and "Z", text and cursors.
 - `test_app.py`: Capu and the dummy together (and the tray icon): walking on
@@ -291,7 +289,6 @@ The constants at the top of `capu.py` control its behavior:
 | `NUDGE_SECONDS`, `SHUFFLE_DISTANCE`, `SHUFFLE_SPEED` | Calm mode: how long the cursor must rub it asleep before it gets up, and how far and how fast it walks off |
 | `GROGGY_LOOKS`, `GROGGY_LOOK_SECONDS` | How many times it looks around, dazed, before walking off, and how long each look lasts |
 | `Z_EVERY`, `Z_SECONDS`, `Z_RISE`, `Z_DRIFT` | How often a "Z" starts floating up while it sleeps, how long each lasts, and how far it rises and drifts sideways |
-| `CELEBRATE_HOPS`, `CELEBRATE_HOP_HEIGHT` | Without the celebration sheet: how many hops it does after breaking the dummy, and how high |
 | `TRAIN_CHANCE`, `TRAIN_RANGE` | How often it goes to train on the dummy, and from how far |
 | `TRAIN_SWINGS`, `TRAIN_PAUSE` | How many swings per training session, and the pause between them |
 | `EVADE_CHANCE`, `EVADE_MARGIN` | How often it dodges a thrown dummy (the rest of the time it takes the hit), and how close to the last moment it waits before dodging |
@@ -304,6 +301,8 @@ The constants at the top of `capu.py` control its behavior:
 | `CLIMB_CHANCE`, `CLIMB_MIN`, `CLIMB_HEIGHT`, `CLIMB_RANGE` | How often it jumps up onto a window when it would wander, and how low, how high and how far away that window's top can be |
 | `CLIMB_OVERSHOOT` | How much higher than the window's top it jumps, to land on it |
 | `STAY_CHANCE`, `WALK_OFF_SPEED` | On a window, how often it wanders along it rather than anywhere (maybe off it), and how fast it goes on as it walks off |
+| `LIGHT_RADIUS`, `LIGHT_STRENGTH`, `LIGHT_STATES` | How far the lantern's glow reaches, how strong it shines, and how much brighter or dimmer while swinging, cheering, dozing or sleeping |
+| `LIGHT_FLICKER`, `LIGHT_FLICKER_MS` | How much the glow wavers, like a flame, and how often |
 | `WALL_BOUNCE_SPEED`, `WALL_SLIDE_SPEED`, `WALL_HOLD`, `WALL_JUMP` | Thrown at a wall at least this fast it bounces off it (slower, it grabs it), how fast it slides down, for how long, and how it jumps off |
 | `CORNER_CHANCE`, `HANG_SECONDS` | How often it goes up onto a window by a corner (else straight onto the top), and how long it hangs before pulling itself up |
 | `PARKOUR_CHANCE`, `KICK_RISE`, `KICK_TIME`, `MIN_GAP`, `MAX_GAP`, `MAX_KICKS` | Going up a gap wall to wall: how often even when one jump would do, how much higher and how fast each jump goes, how narrow and wide the gap can be, and how many jumps at most |
@@ -334,12 +333,15 @@ start fading.
 
 `screen.py` holds what all of them share to draw on the screen (the
 transparent color, where the cursor and the taskbar are), `tray.py` the
-tray icon and `platforms.py` where the windows' tops and sides are (and which parts of
-them are covered by windows in front). `TRAY_SIZES`, `TRAY_HEAD` and `TRAY_OUTLINE` in `capu.py` set how
+tray icon, `platforms.py` where the windows' tops and sides are (and which parts of
+them are covered by windows in front) and `light.py` the lantern's glow: a window of its
+own in front of Capu's, see-through in part (theirs can't be), that adds its light to
+whatever is under it and that the mouse goes through. `TRAY_SIZES`, `TRAY_HEAD` and `TRAY_OUTLINE` in `capu.py` set how
 the icon is drawn: at 16 px only Capu's head fits.
 
 ## Credits
 
+- Capu is inspired by the Little Axion character by [Jesshiyoo](https://jesshiyoo.itch.io/).
 - Dummy art by [Mattz Art](https://xzany.itch.io/).
 - Nanofon pixel font.
 

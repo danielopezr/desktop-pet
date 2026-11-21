@@ -4,6 +4,7 @@ These run the real program for a moment, with a simulated cursor (the real
 mouse is never moved), so Capu and the dummy show up on the screen while
 they run.
 """
+import ctypes
 import time
 import unittest
 from ctypes import wintypes
@@ -88,7 +89,7 @@ class Cursor(AppCase):
 
     def test_the_heads_up_is_centered_on_its_head(self):
         """In every pose, facing either way, the "!" is right over the middle of the
-        head in the frame on show (measured on the image itself, axe left out)."""
+        head in the frame on show (measured on the image itself)."""
         from PIL import Image, ImageTk
         self.park_capu()
         for name in ("idle", "run", "dash", "jump", "fall", "attack1", "hurt"):
@@ -105,7 +106,7 @@ class Cursor(AppCase):
                                          Image.NEAREST)
                     head = capu.head_offset(_without_key(frame))
                     if head is None:
-                        continue                 # horns hidden (a white flash): it keeps the last spot
+                        continue                 # nose hidden (a white flash): it keeps the last spot
                     window_center = self.p.root.winfo_rootx() + self.p.width / 2
                     alert = self.p.alert.window
                     alert_center = alert.winfo_rootx() + alert.winfo_width() / 2
@@ -1001,29 +1002,76 @@ class Windows(AppCase):
 
 
 @needs_sprites
-class WithoutCapusOwnSprites(AppCase):
-    """With only the pack's sprites (none of Capu's own: walls, corners, cheer) it
-    behaves as before."""
+class LanternLight(AppCase):
+    """The glow of its lantern (see light.py)."""
 
-    def setUp(self):
-        available = capu.available
-        p = mock.patch.object(capu, "available",
-                              lambda name: name not in capu.OPTIONAL and available(name))
-        p.start()
-        self.addCleanup(p.stop)
-        super().setUp()
+    def lantern_on_screen(self):
+        """Where the lantern's glass is in the frame on show, on the screen (measured on the image)."""
+        from PIL import Image, ImageTk
+        shown = ImageTk.getimage(self.p.shown).convert("RGB")
+        frame = shown.resize((shown.width // capu.SCALE, shown.height // capu.SCALE), Image.NEAREST)
+        at = capu.lantern_at(_without_key(frame))
+        if at is None:
+            return None
+        return (self.p.root.winfo_rootx() + at[0] * capu.SCALE,
+                self.p.root.winfo_rooty() + at[1] * capu.SCALE)
 
-    def test_it_bounces_off_the_screen_edge(self):
-        lo, hi = self.p.bounds()
-        self.p.x, self.p.y, self.p.vx, self.p.vy = hi - 150, 400, 500, 0.0   # softly: it would grab it
-        self.p.state, self.p.impact_done = "dropped", True
-        self.assertNotIn("wall_slide", self.watch_states(1.5))
-        self.assertNotIn("wall_slide", self.p.frames)
+    def test_it_shines_on_its_lantern_facing_either_way(self):
+        for facing in (1, -1):
+            with self.subTest(facing=facing):
+                self.park_capu(facing=facing)
+                self.pump(0.15)
+                self.assertTrue(self.p.glow.shown)
+                x, y, _ = self.p.light_spot
+                lx, ly = self.lantern_on_screen()
+                self.assertAlmostEqual(x, lx, delta=2)
+                self.assertAlmostEqual(y, ly, delta=2)
 
-    def test_it_celebrates_with_hops(self):
-        self.p.set_state("celebrate")
-        self.assertNotEqual(self.p.anim, "celebrate")
-        self.assertTrue(self.pump(3.0, until=lambda: self.p.state == "idle"))
+    def test_its_light_is_in_front_of_it_so_it_lights_it_up_too(self):
+        self.park_capu()
+        self.pump(0.15)
+        user32 = ctypes.windll.user32
+        user32.GetWindow.restype = wintypes.HWND
+        user32.GetWindow.argtypes = [wintypes.HWND, ctypes.c_uint]
+        capus = ui.top_hwnd(self.p.root)
+        below, hwnd = [], self.p.glow.hwnd
+        for _ in range(500):                             # the windows under the light, in order
+            hwnd = user32.GetWindow(hwnd, 2)             # GW_HWNDNEXT
+            if not hwnd:
+                break
+            below.append(hwnd)
+        self.assertIn(capus, below)
+
+    def test_it_shines_brighter_as_it_swings_and_dimmer_as_it_sleeps(self):
+        self.park_capu()
+        idle = self.p.light_strength()
+        self.p.state = "attack"
+        swinging = self.p.light_strength()
+        self.p.state = "sleep"
+        asleep = self.p.light_strength()
+        self.assertGreater(swinging, idle)
+        self.assertLess(asleep, idle)
+
+    def test_no_light_when_switched_off_or_hidden(self):
+        self.park_capu()
+        self.pump(0.1)
+        self.assertTrue(self.p.glow.shown)
+        self.app.settings["light"] = False
+        self.pump(0.1)
+        self.assertFalse(self.p.glow.shown)
+        self.app.settings["light"] = True
+        self.pump(0.1)
+        self.assertTrue(self.p.glow.shown)
+        self.p.hide()
+        self.pump(0.1)
+        self.assertFalse(self.p.glow.shown)
+
+    def test_no_light_where_no_lantern_shows(self):
+        self.park_capu()
+        self.p.set_anim("death", restart=True, start=12)    # fading away: no lantern left
+        self.p.place()
+        self.assertIsNone(self.p.light_spot)
+        self.assertFalse(self.p.glow.shown)
 
 
 @needs_sprites

@@ -45,10 +45,8 @@ both in this one program.
   moved, and falls off (unhurt) when the window closes, is covered or it walks
   off the edge.
 
-Every animation is listed in ANIMATIONS (dozing off and sleeping have sheets
-of their own only in Capu's sprites; with the pack they come from Death.png).
-The sprites are not included in the repository (see README.md): put the
-pack's PNG files in assets/capu/sprites.
+Every animation is listed in ANIMATIONS. The sprites are not included in the
+repository (see README.md): put Capu's sprite sheets in assets/capu/sprites.
 """
 import ctypes
 import json
@@ -64,6 +62,7 @@ from tkinter import messagebox
 from PIL import Image, ImageChops, ImageFilter
 
 import dummy as training_dummy
+import light
 import platforms
 import tray
 import ui
@@ -73,7 +72,7 @@ from physics import (FALL_DAMAGE_SPEED, GRAVITY, IMPACT_BOUNCE, IMPACT_SPEED, WA
 
 # --- Settings ------------------------------------------------------------------
 SCALE = 4                     # the character is ~27x22 px in the original sprite
-FRAME = 144                   # each frame in the pack is 144x144
+FRAME = 144                   # each frame of the sprite sheets is 144x144
 RUN_SPEED = 160               # pixels per second while wandering
 CHASE_SPEED = 260             # pixels per second while chasing the cursor
 IDLE_SECONDS = (2.0, 7.0)     # how long it stays idle (min, max)
@@ -84,13 +83,13 @@ TICK_MS = 16                  # update rate (~60 fps)
 VISION_RANGE = 450            # horizontal distance at which it sees the cursor
 VISION_HEIGHT = 250           # how far above the taskbar it can see the cursor
 LOSE_RANGE = 600              # beyond this distance it stops chasing
-ATTACK_REACH = 35 * SCALE     # axe reach (the slash reaches 26-43 px ahead; Capu's lantern, up to 33)
+ATTACK_REACH = 35 * SCALE     # lantern reach (its swing gets up to 33 px ahead)
 ATTACK_HEIGHT = 19 * SCALE    # top of the slash above its feet (sprite: 1-19 px)
 SLASH_CENTER = 10 * SCALE     # middle of the slash above its feet: where it aims
 # How far ahead of its body center the slash gets is measured from the sprites
-# (see slash_reach): 43 px with the pack's axe, 33 with Capu's lantern.
+# (see slash_reach): about 33 px.
 ATTACK_PAUSE = 0.35           # pause between swings, in seconds
-TOO_CLOSE = 20 * SCALE        # cursor on top of it: the axe would miss
+TOO_CLOSE = 20 * SCALE        # cursor on top of it: the lantern would miss
 DASH_SPEED = 550              # pixels per second when dashing back
 JUMP_MAX_HEIGHT = 160         # highest jump, in pixels (it jumps just enough to aim)
 JUMP_MIN_HEIGHT = 40          # lowest jump, in pixels
@@ -112,8 +111,6 @@ FLEE_AT = 2                   # with this many hits left (or fewer) it flees the
 FLEE_DASH_DISTANCE = 200      # if the cursor is closer than this, it dashes away
 FLEE_JUMP_HEIGHT = 90         # height of the dodging hops while fleeing, in pixels
 FLEE_JUMPS_PER_SECOND = (0.6, 2.0)  # how often it hops: cursor far, cursor close
-CELEBRATE_HOPS = 3            # little hops when it breaks the dummy
-CELEBRATE_HOP_HEIGHT = 75     # height of those hops, in pixels
 
 # Dozing off
 SLEEP_AFTER = 60.0            # seconds without the mouse moving before it falls asleep
@@ -149,6 +146,15 @@ CLIMB_RANGE = 700             # ...and at most this far to either side
 CLIMB_OVERSHOOT = 40          # it jumps this much higher than the window top, to land on it
 STAY_CHANCE = 0.6             # on a window, chance of wandering along it (else anywhere: maybe off it)
 WALK_OFF_SPEED = 120          # sideways speed it keeps as it walks off the edge of a window
+
+# The lantern's light (see light.py)
+LIGHT_RADIUS = 16             # sprite pixels from the lantern to the edge of its glow
+LIGHT_STRENGTH = 0.75         # how strong it shines, from 0 to 1...
+LIGHT_STATES = {"attack": 1.0, "air_attack": 1.0, "celebrate": 1.0,   # ...brighter as it swings or cheers...
+                "doze": 0.5, "sleep": 0.35}                           # ...dimmer as it dozes off and sleeps
+LIGHT_FLICKER = 0.12          # how much it wavers, like a flame (share of its strength)
+LIGHT_FLICKER_MS = 110        # how often it changes how much
+LIGHT_RAISE_SECONDS = 0.5     # how often its light is put back in front of it (if anything came over it)
 
 # Parkour: the screen's edges and the windows' sides are walls (only in the air)
 WALL_BOUNCE_SPEED = 900       # thrown at a wall this fast (sideways) or more, it bounces off it; slower,
@@ -195,10 +201,11 @@ DEFAULT_SETTINGS = {
     "training": True,         # go and hit the dummy now and then
     "dummy_hits_back": True,  # the dummy sometimes hits Capu back
     "windows": True,          # climb onto and walk on the open windows
+    "light": True,            # its lantern lights up what is around it
 }
 SETTING_LABELS = {"calm": "Calm mode", "do_not_disturb": "Do not disturb",
                   "training": "Training", "dummy_hits_back": "Dummy hits back",
-                  "windows": "Walk on windows"}
+                  "windows": "Walk on windows", "light": "Lantern light"}
 FULLSCREEN_CHECK_MS = 1000    # how often "do not disturb" looks for a full-screen app
 
 # The icon in the system tray: Capu drawn pixel for pixel, with a light
@@ -220,21 +227,14 @@ ANIMATIONS = {
     "fall":    ("Fall.png",     100, True),
     "hurt":    ("Hurt.png",      70, False),
     "death":   ("Death.png",     90, False),
-    # Dozing off and sleeping have sheets of their own in Capu's sprites. The
-    # pack has none, but it slumps with its eyes closed partway through
-    # Death.png, so without them those frames (FALLBACKS) make them instead.
     "doze":    ("Doze.png",     150, False),
     "sleep":   ("Sleep.png",    900, True),
-    # Capu's own sprites only (the pack has nothing like them): without them it
-    # bounces off the walls, only jumps straight onto windows and celebrates with hops.
     "wall_slide":  ("Wall Slide.png",   90, True),
     "wall_jump":   ("Wall Jump.png",    60, False),
     "ledge_grab":  ("Ledge Grab.png",  140, True),
     "ledge_climb": ("Ledge Climb.png",  70, False),
     "celebrate":   ("Celebrate.png",    80, False),
 }
-FALLBACKS = {"doze": ("Death.png", (3, 4, 5, 6)), "sleep": ("Death.png", (6, 7))}  # file and frames
-OPTIONAL = ("wall_slide", "wall_jump", "ledge_grab", "ledge_climb", "celebrate")
 USED = tuple(ANIMATIONS)
 
 
@@ -300,28 +300,8 @@ def fullscreen_app_open():
                 and rect.right >= m.right and rect.bottom >= m.bottom)
 
 
-def source(name):
-    """(file, frames) animation `name` comes from: its own sheet (frames None:
-    all of them), or the frames of another one when it has none (FALLBACKS)."""
-    file = ANIMATIONS[name][0]
-    if name in FALLBACKS and not (SPRITES / file).exists():
-        return FALLBACKS[name]
-    return file, None
-
-
-def available(name):
-    """Whether animation `name` can be shown: its sheet (or the one it borrows from) is there."""
-    return (SPRITES / source(name)[0]).exists()
-
-
-def shown_animations():
-    """The animations it has sprites for (the OPTIONAL ones only come with Capu's own)."""
-    return [name for name in ANIMATIONS if available(name)]
-
-
 def missing_sprites():
-    files = dict.fromkeys(source(name)[0] for name in ANIMATIONS if name not in OPTIONAL)
-    return [file for file in files if not (SPRITES / file).exists()]
+    return [file for file, _, _ in ANIMATIONS.values() if not (SPRITES / file).exists()]
 
 
 def raw_frames(file):
@@ -331,10 +311,8 @@ def raw_frames(file):
 
 
 def sheet_frames(name):
-    """The frames of animation `name`, uncropped (only the picked ones, if it borrows them)."""
-    file, picks = source(name)
-    frames = raw_frames(file)
-    return frames if picks is None else [frames[i] for i in picks]
+    """The frames of animation `name`, uncropped."""
+    return raw_frames(ANIMATIONS[name][0])
 
 
 def union_bbox(frames):
@@ -351,7 +329,7 @@ def crop_box():
     most idle and run frames (a stray frame goes one pixel lower and must not
     leave the rest floating).
     """
-    all_frames = [f for name in shown_animations() for f in sheet_frames(name)]
+    all_frames = [f for name in ANIMATIONS for f in sheet_frames(name)]
     x0, y0, x1, y1 = union_bbox(all_frames)
     bx0, _, bx1, _ = union_bbox(raw_frames(ANIMATIONS["idle"][0]))
     center = (bx0 + bx1) / 2
@@ -368,47 +346,16 @@ def animation_frames(name, box):
     return [f.crop(box) for f in sheet_frames(name)]
 
 
-HORN_ROWS = 3                 # rows of the horns that mark the width of its head
-HORN_SPAN = (9, 15)           # how wide (sprite pixels) both horns span when they show well
-
-
-def horns(frame):
-    """(left, top, right) of its two horns in `frame`, or None if they don't show well.
-
-    The horns are the only white at the top of the sprite (the eyes are lower,
-    the axe is teal), so they mark the top and the middle of its head. The
-    axe can't be told apart by its color alone (it has a dark edge), and it
-    sits right behind the head. In a frame where the horns are hidden (the
-    big slash) or everything flashes white (getting hurt), they don't count.
-    """
-    white = Image.new("L", frame.size)
-    px, out = frame.load(), white.load()
-    for y in range(frame.height):
-        for x in range(frame.width):
-            r, g, b, a = px[x, y]
-            if a >= 128 and r > 200 and g > 200 and b > 200:
-                out[x, y] = 255
-    box = white.getbbox()
-    if not box:
-        return None
-    top = box[1]
-    left, _, right, _ = white.crop((0, top, frame.width, top + HORN_ROWS)).getbbox()
-    if not HORN_SPAN[0] <= right - left <= HORN_SPAN[1]:
-        return None
-    return left, top, right
-
-
-NOSE = (0xE9, 0xA3, 0xA3)     # Capu's pink nose in its own lantern sprites (it has no horns there)
+NOSE = (0xE9, 0xA3, 0xA3)     # Capu's pink nose: no other part of the sprites is that color
 NOSE_TO_TOP = 8               # rows from its nose up to the tips of its hood's ears
-HOOD_HALF = 6                 # its hood spans this far to each side of the nose (13 px, like the horns)
+HOOD_HALF = 6                 # its hood spans this far to each side of the nose (13 px)
 
 
 def nose(frame):
-    """(left, top, right) of its head in `frame` found from its nose, for the
-    lantern sprites, or None if the nose doesn't show.
+    """(left, top, right) of its head in `frame` found from its nose, or None if
+    the nose doesn't show.
 
-    No other part of those sprites is that pink, and its head (hood and face)
-    never changes shape, so the nose marks the middle of its head and how far
+    Its head (hood and face) never changes shape, so the nose marks the middle of its head and how far
     up it starts. It doesn't show when everything flashes white (getting hurt)
     or when it fades away.
     """
@@ -422,34 +369,58 @@ def nose(frame):
 
 
 def nose_at(frame):
-    """(x, y) of its nose in `frame` (lantern sprites only)."""
+    """(x, y) of its nose in `frame`."""
     left, top, _ = nose(frame)
     return left + HOOD_HALF, top + NOSE_TO_TOP
 
 
+LANTERN_GLASS = {(0xFA, 0xD0, 0x58), (0xFF, 0xEE, 0xB2)}   # the flame and the lit glass
+LANTERN_IRON = (0x48, 0x4C, 0x53)                         # the lantern's sides
+
+
+def lantern_at(frame):
+    """(x, y) of the middle of its lantern's glass in `frame`, or None if no lit
+    lantern shows (dying, a white flash). The glass is the flame's colors with
+    the lantern's iron on both sides: not the yellow trails of a swing."""
+    width, height = frame.size
+    data = frame.load()
+    def iron(x, y):
+        return 0 <= x < width and data[x, y][3] and data[x, y][:3] == LANTERN_IRON
+    xs, ys = [], []
+    for y in range(height):
+        for x in range(width):
+            r, g, b, a = data[x, y]
+            if a and (r, g, b) in LANTERN_GLASS and any(iron(x - d, y) for d in (1, 2, 3)) \
+                    and any(iron(x + d, y) for d in (1, 2, 3)):
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None
+    return sum(xs) / len(xs) + 0.5, sum(ys) / len(ys) + 0.5
+
+
 def head_mark(frame):
-    """(left, top, right) of its head in `frame`, or None if it doesn't show well:
-    from its horns in the pack's sprites, from its nose in the lantern ones."""
-    return horns(frame) or nose(frame)
+    """(left, top, right) of its head in `frame`, or None if it doesn't show (see nose)."""
+    return nose(frame)
 
 
 def head_offset(frame):
-    """How far the middle of its head (between its horns) is from the middle of
+    """How far the middle of its head (around its nose) is from the middle of
     `frame`, in screen pixels (facing right), or None if its head doesn't show."""
     h = head_mark(frame)
     return None if h is None else ((h[0] + h[2]) / 2 - frame.width / 2) * SCALE
 
 
 def head_top_row(frame):
-    """The row of `frame` where its head starts (the tips of its horns), or None."""
+    """The row of `frame` where its head starts (the tips of its hood's ears), or None."""
     h = head_mark(frame)
     return None if h is None else h[1]
 
 
 def slash_reach(box):
     """How far ahead of its body center (sprite pixels) its swing gets in the
-    frames where it lands (the shortest of them): the axe's slash in the pack's
-    sprites, the lantern in Capu's own ones. `box` is the crop from crop_box."""
+    frames where it lands (the shortest of them): the lantern at the end of its
+    staff. `box` is the crop from crop_box."""
     center = (box[0] + box[2]) / 2
     reach = []
     for name, picks in SLASH_FRAMES.items():
@@ -502,7 +473,7 @@ def icon_image(image, size):
 
 def tray_images(box):
     """Its icon for the system tray, {size: image}: its idle pose, or only its
-    head (between the horns, down) where the whole of it doesn't fit."""
+    head (its hood, down) where the whole of it doesn't fit."""
     frame = animation_frames("idle", box)[0]
     left, top, right = head_mark(frame)
     middle = (left + right) // 2
@@ -529,7 +500,7 @@ class App:
         self.away = False                         # hidden by "do not disturb"
         self.ledges = []                          # window tops to stand on: (height, left, right, window)
         self.walls = []                           # window sides: (x, low, high, face, window), see all_walls
-        self.dummy =training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
+        self.dummy = training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
         self.capu = Capu(self.root, self)
         try:
             self.tray = tray.TrayIcon(self.root, tray_images(self.capu.box), "Capu",
@@ -576,6 +547,8 @@ class App:
         if event.widget is self.root and self.tray:
             self.tray.remove()
             self.tray = None
+        if event.widget is self.root and self.capu.glow is not None:
+            self.capu.glow.destroy()              # its own window: Tk doesn't close it
 
     def tray_clicked(self):
         """The tray icon: the main menu, at the cursor (above the taskbar)."""
@@ -705,34 +678,41 @@ class Capu:
         # ...and how high the top of its head is, above its feet (lower when it slumps).
         idle_frame = animation_frames("idle", box)[0]
         idle_offset = head_offset(idle_frame)
-        # The sprite isn't centered on its body (the axe sits behind it): flipped
+        # The sprite isn't centered on its body (the lantern hangs behind it): flipped
         # to face the other way, the body would jump twice this far (see turn).
         self.turn_shift = idle_offset
         idle_height = self.ground - head_top_row(idle_frame) * SCALE
         self.head_offsets, self.head_heights = {}, {}
-        self.shown_anims = shown_animations()
-        # What it can do with the sprites it has (Capu's own add walls, corners and a cheer).
-        self.can_wall = available("wall_slide") and available("wall_jump")
-        self.can_hang = available("ledge_grab") and available("ledge_climb")
-        self.can_cheer = available("celebrate")
         # Hanging from a corner it is drawn down and to one side of where it will
         # stand on the window: how far (screen pixels, facing right), from its nose.
-        self.hang_shift = (0.0, 0.0)
-        if self.can_hang:
-            (ix, iy), (gx, gy) = (nose_at(sheet_frames(n)[0]) for n in ("idle", "ledge_grab"))
-            self.hang_shift = ((gx - ix) * SCALE, (gy - iy) * SCALE)
-        for name in self.shown_anims:
+        (ix, iy), (gx, gy) = (nose_at(sheet_frames(n)[0]) for n in ("idle", "ledge_grab"))
+        self.hang_shift = ((gx - ix) * SCALE, (gy - iy) * SCALE)
+        for name in ANIMATIONS:
             frames = animation_frames(name, box)
             self.head_offsets[name] = fill_gaps([head_offset(f) for f in frames], idle_offset)
             rows = fill_gaps([head_top_row(f) for f in frames], None)
             self.head_heights[name] = [idle_height if r is None else self.ground - r * SCALE
                                        for r in rows]
+        # Where its lantern is in every frame (screen pixels in its window, facing
+        # right; None where no lit lantern shows): its light goes there.
+        self.lanterns = {}
+        for name in ANIMATIONS:
+            spots = [lantern_at(f) for f in animation_frames(name, box)]
+            self.lanterns[name] = [None if s is None else (s[0] * SCALE, s[1] * SCALE) for s in spots]
+        try:
+            self.glow = light.Glow(LIGHT_RADIUS, SCALE)
+        except OSError:
+            self.glow = None                      # no light, but everything else works
+        self.light_spot = None                    # (x, y, strength) of its light on the screen now
+        self.flicker = self.flicker_to = 1.0      # how much the flame's light wavers now / next
+        self.next_flicker = 0.0
+        self.next_raise = 0.0                     # when to put its light back in front of it
         self.impact_done = True                   # only a fresh throw can hit the dummy
         self.celebrate_pending = False
 
         # Frames facing right (original) and left (flipped).
         self.frames = {}
-        for name in self.shown_anims:
+        for name in ANIMATIONS:
             raw = animation_frames(name, box)
             self.frames[name] = {
                 1: [to_photo(f, SCALE) for f in raw],
@@ -748,9 +728,8 @@ class Capu:
         idle_frames = [f.crop(box) for f in raw_frames(ANIMATIONS["idle"][0])]
         self.hit_shapes = {None: {facing: hit_shape(idle_frames, facing) for facing in (1, -1)}}
         for name in ("ledge_grab", "ledge_climb"):
-            if name in self.shown_anims:
-                frames = animation_frames(name, box)
-                self.hit_shapes[name] = {facing: hit_shape(frames, facing) for facing in (1, -1)}
+            frames = animation_frames(name, box)
+            self.hit_shapes[name] = {facing: hit_shape(frames, facing) for facing in (1, -1)}
         self.hitbox = ui.hit_zone(master)
         self.hitbox_facing = None             # the side its current shape faces...
         self.hitbox_kind = None               # ...and whose shape it is (None: the idle pose)
@@ -829,9 +808,12 @@ class Capu:
         self.hide_emotes()
 
     def hide_emotes(self):
-        """Off the screen, nothing is left floating where its head was."""
+        """Off the screen, nothing is left floating where its head was (nor its light)."""
         for emote in (self.alert, self.question, *self.zzz):
             emote.hide()
+        if self.glow is not None:
+            self.glow.hide()
+            self.light_spot = None
 
     def unhide(self):
         self.hidden = False
@@ -969,10 +951,8 @@ class Capu:
         elif state == "jump":
             self.start_jump()
         elif state == "celebrate":
-            self.hops_left = CELEBRATE_HOPS
             self.vy = 0.0
-            if self.can_cheer:
-                self.set_anim("celebrate", restart=True)
+            self.set_anim("celebrate", restart=True)   # its victory pose, where it stands
         elif state == "doze":
             self.start_doze()
         elif state == "sleep":
@@ -1040,7 +1020,7 @@ class Capu:
         self.set_anim("run", restart=True, frame_ms=SHUFFLE_FRAME_MS)
 
     def train_target(self):
-        """Spot at the axe's distance from the dummy, on the side Capu is on
+        """Spot at the lantern's distance from the dummy, on the side Capu is on
         (or the other one if there is no room there)."""
         lo, hi = self.bounds()
         cx = self.dummy.center_x()
@@ -1128,7 +1108,7 @@ class Capu:
         elif self.state == "flee":
             self.flee(dt)
         elif self.state == "celebrate":
-            self.celebrate(dt)
+            pass                             # its victory pose: see animation_finished
         elif self.state == "evade":
             self.evade_step(dt)
         elif self.state in ("doze", "sleep"):
@@ -1427,13 +1407,13 @@ class Capu:
         self.facing = 1 if dx >= 0 else -1
         if abs(dx) <= ATTACK_REACH:
             if height > ATTACK_HEIGHT:
-                self.set_state("jump")       # too high for the axe: jump at it
+                self.set_state("jump")       # too high for the lantern: jump at it
             elif abs(dx) < TOO_CLOSE:
                 self.dodge(dx)               # cursor on top of it: back off to hit it
             else:
                 self.set_state("attack")
             return
-        # Run closer until the cursor is within the axe's reach.
+        # Run closer until the cursor is within the lantern's reach.
         lo, hi = self.bounds()
         mx = self.x + dx
         target = min(max(mx - self.facing * ATTACK_REACH * 0.8, lo), hi)
@@ -1450,7 +1430,7 @@ class Capu:
             dx, height = seen
             if abs(dx) >= 1:
                 self.facing = 1 if dx > 0 else -1
-            # Drift so the cursor ends up at the axe's distance, not right overhead.
+            # Drift so the cursor ends up at the lantern's distance, not right overhead.
             lo, hi = self.bounds()
             target = min(max(self.x + dx - self.facing * ATTACK_REACH * 0.8, lo), hi)
             self.move_towards(target, JUMP_DRIFT, dt)
@@ -1704,10 +1684,10 @@ class Capu:
             plans.append(("leap", spot))
         for corner in self.corners(ledge):
             hang_x, hang_y = corner[3], corner[4]
-            if (self.can_hang and CLIMB_MIN <= hang_y - self.y <= CLIMB_HEIGHT and lo <= hang_x <= hi
+            if (CLIMB_MIN <= hang_y - self.y <= CLIMB_HEIGHT and lo <= hang_x <= hi
                     and abs(hang_x - self.x) <= CLIMB_RANGE and self.on_my_floor(hang_x)):
                 plans.append(("corner", hang_x, corner))
-            route = self.chimney(ledge, corner) if self.can_wall else None
+            route = self.chimney(ledge, corner)
             if route:
                 plans.append(("parkour",) + route)
         return plans
@@ -1749,7 +1729,7 @@ class Capu:
         if not own:
             return None
         lo, hi = self.bounds()
-        hang = self.can_hang and random.random() < CORNER_CHANCE
+        hang = random.random() < CORNER_CHANCE
         end = ("hang", stand_x, height, hwnd, facing, hang_x, hang_y) if hang else \
               ("top", side + facing * (bh + 10), height + CLIMB_OVERSHOOT, hwnd)
         end_y = end[6] if hang else end[2]
@@ -1923,8 +1903,6 @@ class Capu:
         """Thrown into a wall: fast, it bounces off it; slower, it grabs it and slides
         down it (True). The screen's edges are walls (bouncing off them is fly_step's);
         so are the windows' sides."""
-        if not self.can_wall:
-            return False
         middle = self.y + self.body_height / 2
         hits = []
         for wall in self.app.all_walls():
@@ -2219,26 +2197,8 @@ class Capu:
             if self.x == self.target:
                 self.set_state("idle", idle_seconds=JUMP_PAUSE)
 
-    def celebrate(self, dt):
-        """After breaking the dummy: its victory pose (it plays where it stands, see
-        animation_finished), or, with the pack's sprites, little hops of joy."""
-        if self.can_cheer:
-            return
-        if self.grounded() and self.vy <= 0:
-            if self.hops_left == 0:
-                self.set_state("idle")
-                return
-            self.hops_left -= 1
-            self.vy = (2 * GRAVITY * CELEBRATE_HOP_HEIGHT) ** 0.5
-            self.y = self.floor + 0.1
-        self.vy -= GRAVITY * dt
-        self.y = max(self.y + self.vy * dt, self.floor)   # hops where it stands
-        if self.grounded():
-            self.vy = 0.0
-        self.set_anim("jump" if self.vy > 0 else "fall" if not self.grounded() else "idle")
-
     def dodge(self, dx):
-        """Dash back so the cursor ends up at the axe's distance."""
+        """Dash back so the cursor ends up at the lantern's distance."""
         lo, hi = self.bounds()
         mx = self.x + dx
         away = -1 if dx > 0 else 1 if dx < 0 else random.choice((1, -1))
@@ -2288,6 +2248,39 @@ class Capu:
         y = bottom - self.ground - round(self.y)
         self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
         self.place_hitbox(x, y)
+        self.place_light(x, y)
+
+    def light_strength(self):
+        """How strong its lantern shines now: by what it is doing, wavering like a flame."""
+        now = time.perf_counter()
+        if now >= self.next_flicker:
+            self.flicker_to = random.uniform(1 - LIGHT_FLICKER, 1 + LIGHT_FLICKER / 3)
+            self.next_flicker = now + LIGHT_FLICKER_MS / 1000
+        self.flicker += (self.flicker_to - self.flicker) * 0.35
+        return min(1.0, LIGHT_STATES.get(self.state, LIGHT_STRENGTH) * self.flicker)
+
+    def place_light(self, x, y):
+        """Put its lantern's light where the lantern is in the frame on show (its
+        window is at x, y), in front of it, or hide it: off in the settings, or no
+        lantern shows."""
+        if self.glow is None:
+            return
+        spot = None
+        if self.app.settings["light"] and not self.hidden and not self.gone and not self.away:
+            frames = self.lanterns[self.anim]
+            at = frames[min(self.frame_index, len(frames) - 1)]
+            if at is not None:
+                ox, oy = at
+                spot = (x + (ox if self.facing == 1 else self.width - ox), y + oy, self.light_strength())
+        self.light_spot = spot
+        if spot is None:
+            self.glow.hide()
+            return
+        self.glow.show(*spot)
+        now = time.perf_counter()
+        if now >= self.next_raise:           # its window may have come to the front: back behind the light
+            self.glow.raise_()
+            self.next_raise = now + LIGHT_RAISE_SECONDS
 
     def place_hitbox(self, x, y):
         """Keep the hit zone under its body, facing its way; only while it is alive
@@ -2324,6 +2317,8 @@ class Capu:
 
     def keep_on_top(self):
         self.root.attributes("-topmost", True)
+        if self.glow is not None:
+            self.glow.raise_()                    # its light stays in front of it
         if self.hitbox_shown:
             self.hitbox.attributes("-topmost", True)
             ui.stack_below(self.hitbox, self.label)
@@ -2345,7 +2340,6 @@ if __name__ == "__main__":
         messagebox.showerror(
             "Capu",
             "Sprites not found in assets/capu/sprites:\n\n" + "\n".join(missing)
-            + "\n\nDownload the free \"Little Axion\" pack by Jesshiyoo "
-              "(https://jesshiyoo.itch.io/) and copy its PNG files there. See README.md.")
+            + "\n\nSee README.md.")
         raise SystemExit(1)
     App().run()

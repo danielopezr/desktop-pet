@@ -15,7 +15,7 @@ own images (characters, hearts, "!" and "?") on a plain backdrop with the
 simulated windows, with the simulated cursor drawn on top. The real mouse is
 never moved, and the real settings, cursor files and windows are left alone.
 Capu and the dummy show up on the screen for about 30 seconds while it
-records. It needs Capu's own sprites (see README.md).
+records. It needs the sprites (see README.md).
 """
 import ctypes
 import random
@@ -168,6 +168,11 @@ def capture():
         put(cached_rgba(d_frame[0]), wx, wy)
     if p.on_screen() and p.shown is not None:
         put(cached_rgba(p.shown), p.root.winfo_rootx(), p.root.winfo_rooty())
+    if p.on_screen() and p.light_spot is not None:          # its lantern's light, in front of it
+        x, y, strength = p.light_spot
+        rgb = img.convert("RGB")
+        p.glow.draw_on(rgb, x - SCENE[0], y - SCENE[1], strength)
+        img = rgb.convert("RGBA")
     for hearts in (d.hearts, p.hearts):
         if hearts.visible and hearts.current is not None:
             put(cached_rgba(hearts.current), hearts.window.winfo_rootx(), hearts.window.winfo_rooty())
@@ -350,7 +355,7 @@ finished = [None]
 then(lambda: move_to((left + 520, bottom - 380), 0.6), wait=800)
 then(break_dummy, wait=200)                                            # breaks it...
 then(lambda: None, when=lambda: p.state == "celebrate")                # ...victory pose
-then(d.hide, when=lambda: p.state == "idle", wait=300)                # (the broken dummy stays away)
+then(d.hide, when=lambda: p.state == "idle" and d.gone, wait=300)      # (the broken dummy stays away)
 then(lambda: walk_to(left + 200))
 then(open_windows, when=lambda: p.state == "idle" and abs(p.x - (left + 200)) < 1, wait=300)
 then(lambda: move_to(capu_body, 0.5), wait=500)
