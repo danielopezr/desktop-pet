@@ -1,4 +1,4 @@
-"""Interface shared by Parton and the dummy: the right-click menu and the
+"""Interface shared by Capu and the dummy: the right-click menu and the
 hearts that show up when the cursor is over a character.
 
 Both are tiny pixel drawings made here, at the characters' pixel size. The menu's
@@ -28,7 +28,7 @@ RED = (184, 50, 58, 255)          # button, and a full heart
 LIGHT_RED = (232, 112, 122, 255)  # button under the cursor
 DARK_RED = (122, 28, 35, 255)     # pressed button, and the buttons' bottom edge
 GRAY = (87, 82, 77, 255)          # empty heart
-GOLD = (255, 204, 64, 255)        # the "?" Parton shows when the dummy hits back
+GOLD = (255, 204, 64, 255)        # the "?" Capu shows when the dummy hits back
 HEARTS_GAP = 4            # pixels between the top of the head and the hearts
 HEART_GAP = 1             # between one heart and the next, in drawing pixels
 HEAD_ROWS = 3             # the top rows of a sprite that are only its head
@@ -48,14 +48,14 @@ QUESTION = (".##.",
             "..#.",
             "....",
             "..#.")
-# A 2x6 exclamation mark, popped over Parton's head when he spots the cursor.
+# A 2x6 exclamation mark, popped over Capu's head when he spots the cursor.
 EXCLAMATION = ("##",
                "##",
                "##",
                "##",
                "..",
                "##")
-# A 5x5 "Z", floating up while Parton sleeps.
+# A 5x5 "Z", floating up while Capu sleeps.
 SLEEP_Z = ("#####",
            "...#.",
            "..#..",
@@ -114,7 +114,7 @@ FIST = (".k.k.k..",              # a closed hand: while holding a character
         "..cccc..")
 # The pixel that clicks, in the drawing with its outline (the outline adds 1).
 CURSOR_HOTSPOTS = {"sword": (1, 1), "fist": (4, 4)}
-CURSOR_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Parton" / "cursors"
+CURSOR_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Capu" / "cursors"
 
 
 def cursor_drawing(rows):
@@ -166,7 +166,7 @@ _cursors = None
 def cursor(name):
     """Tk cursor for "sword" (over a character) or "fist" (holding one).
 
-    The .cur files are made at start-up in %APPDATA%\\Parton\\cursors; if that
+    The .cur files are made at start-up in %APPDATA%\\Capu\\cursors; if that
     fails, Windows' own hand and move cursors stand in.
     """
     global _cursors

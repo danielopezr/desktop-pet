@@ -1,15 +1,15 @@
-"""Training dummy that lives next to Parton, in the same program.
+"""Training dummy that lives next to Capu, in the same program.
 
 - Starts in the bottom-left corner of the screen, standing on the taskbar.
-- A quick left click hits it (the cursor turns into a sword over it); Parton
+- A quick left click hits it (the cursor turns into a sword over it); Capu
   hits it too. The yellow impact of the hit shows up where it was hit.
-- Hold or drag to pick it up and throw it, like Parton, but it is twice as
-  heavy: it flies half as fast and bounces less. Thrown at Parton, it hurts
+- Hold or drag to pick it up and throw it, like Capu, but it is twice as
+  heavy: it flies half as fast and bounces less. Thrown at Capu, it hurts
   him. Like him, it lands on the tops of the open windows, rides along when a
   window moves, and falls when it goes.
 - On the 14th hit it breaks and disappears; it comes back on its own after
   RESPAWN_SECONDS, or right away with "Revive dummy" in the menu.
-- Right click: the shared menu (see App in parton.py).
+- Right click: the shared menu (see App in capu.py).
 """
 import time
 import tkinter as tk
@@ -24,7 +24,7 @@ from physics import CursorTrail, fly_step, is_drag, throw_velocity
 from screen import KEY_COLOR, mouse_pos, solid_mask, to_photo, work_area
 
 # --- Settings ------------------------------------------------------------------
-SCALE = 4                 # 80x48 px frames; same pixel size as Parton
+SCALE = 4                 # 80x48 px frames; same pixel size as Capu
 FRAME_W, FRAME_H = 80, 48
 HITS_TO_DIE = 14          # even: two hits per heart
 HIT_FRAME_MS = 60
@@ -32,7 +32,7 @@ BREAK_FRAME_MS = 90
 RUBBLE_VISIBLE_MS = 1_500  # how long the remains stay before it disappears
 RESPAWN_SECONDS = 15      # after breaking, it comes back on its own after this long
 MARGIN = 8                # distance from the screen edge where it starts
-WEIGHT = 2.0              # twice as heavy as Parton: thrown half as fast
+WEIGHT = 2.0              # twice as heavy as Capu: thrown half as fast
 TICK_MS = 16              # update rate while held or flying (~60 fps)
 HIT_CACHE_SIZE = 30       # hit animations kept ready (one per spot hit): the oldest are dropped
 IMPACT_COLOR = (255, 200, 37)  # the yellow sparks in HIT.png: moved to where each hit lands
@@ -42,7 +42,7 @@ SHEETS = ("IDLE", "HIT", "BREAKING")
 
 
 def available():
-    """True if the dummy's sprites are in place (otherwise Parton runs alone)."""
+    """True if the dummy's sprites are in place (otherwise Capu runs alone)."""
     return all((SPRITES / f"{name}.png").exists() for name in SHEETS)
 
 
@@ -153,7 +153,7 @@ class TrainingDummy:
         self.gone = False       # broken and already gone from the screen
         self.hidden = False     # hidden from the menu
         self.away = False       # hidden for a while by "do not disturb"
-        self.throws = 0         # how many times it has been thrown (Parton dodges per throw)
+        self.throws = 0         # how many times it has been thrown (Capu dodges per throw)
         self.anim_job = None
         self.respawn_job = None # pending automatic comeback after breaking
         self.pressed = None     # (time, x, y) of a left click in progress
@@ -175,16 +175,16 @@ class TrainingDummy:
         self.state = "rest"                     # "rest", "held" or "flying"
         self.platform = None                    # the window it stands on (None: the taskbar)
         self.platform_rect = None               # ...and where that window was last seen
-        self.impact_done = True                 # only a fresh throw can hit Parton
+        self.impact_done = True                 # only a fresh throw can hit Capu
         self.place()
 
-    # --- State seen by Parton and the menu ----------------------------------------
+    # --- State seen by Capu and the menu ----------------------------------------
     def resting(self):
         """Standing still somewhere (the taskbar or a window), and visible."""
         return self.alive and not self.hidden and not self.away and self.state == "rest"
 
     def standing(self):
-        """Standing still on the taskbar and visible: Parton can train on it."""
+        """Standing still on the taskbar and visible: Capu can train on it."""
         return self.resting() and self.platform is None
 
     def can_be_hit(self):
@@ -255,7 +255,7 @@ class TrainingDummy:
         self.reset_position()
         self.show_windows()
 
-    # --- Clicking: hit, or drag and throw (same as Parton) ---------------------------
+    # --- Clicking: hit, or drag and throw (same as Capu) ---------------------------
     def window_pos(self):
         _, _, _, bottom = work_area()
         return self.x, bottom - self.height - self.y
@@ -290,7 +290,7 @@ class TrainingDummy:
         self.set_cursor("fist")
         self.vx = self.vy = 0.0
         self.trail = CursorTrail()
-        self.impact_done = False  # one hit on Parton per throw, at most
+        self.impact_done = False  # one hit on Capu per throw, at most
 
     def let_go(self):
         """Stop holding it (hidden or broken while held): it just falls."""
@@ -318,7 +318,7 @@ class TrainingDummy:
             self.master.after(TICK_MS, self.tick)
 
     def update(self):
-        # Real time between updates (like Parton, who foresees its flight to
+        # Real time between updates (like Capu, who foresees its flight to
         # dodge it): a late update mustn't slow its flight down.
         now = time.perf_counter()
         dt, self.last = min(now - self.last, 0.1), now
@@ -462,7 +462,7 @@ class TrainingDummy:
             self.anim_job = None
 
     def take_hit(self, point=None):
-        """A hit from the cursor or from Parton (also while held or flying), at the
+        """A hit from the cursor or from Capu (also while held or flying), at the
         screen `point` (x, y) it landed on, if known. Returns True if this hit broke it."""
         if not self.can_be_hit():
             return False
@@ -525,7 +525,7 @@ class TrainingDummy:
         return self.hit_cache[key]
 
     def swing_back(self):
-        """Hit back at Parton: it swings on its post (the hit wobble)."""
+        """Hit back at Capu: it swings on its post (the hit wobble)."""
         self.cancel_anim()
         self.play(self.hit_plain, HIT_FRAME_MS, on_done=lambda: self.show_frame(self.idle[0]))
 

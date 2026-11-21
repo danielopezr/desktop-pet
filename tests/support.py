@@ -2,8 +2,8 @@
 
 The tests never touch the real mouse, the real settings or the real cursor
 files: the cursor position is simulated, and settings and cursors go to a
-temporary folder. The open windows Parton can stand on are simulated too. Tests that run the whole program open its windows for a
-moment (Parton and the dummy show up on the screen while they run).
+temporary folder. The open windows Capu can stand on are simulated too. Tests that run the whole program open its windows for a
+moment (Capu and the dummy show up on the screen while they run).
 """
 import ctypes
 import random
@@ -25,11 +25,11 @@ except (AttributeError, OSError):
     pass
 
 import dummy  # noqa: E402
-import parton  # noqa: E402
+import capu    # noqa: E402
 import platforms  # noqa: E402
 import ui  # noqa: E402
 
-REAL_FULLSCREEN_CHECK = parton.fullscreen_app_open   # before any test swaps it
+REAL_FULLSCREEN_CHECK = capu.fullscreen_app_open     # before any test swaps it
 
 
 def cancel_timers(root):
@@ -54,7 +54,7 @@ def close_root(root):
 
 
 def sprites_available():
-    return not parton.missing_sprites() and dummy.available()
+    return not capu.missing_sprites() and dummy.available()
 
 
 def needs_sprites(cls):
@@ -102,23 +102,23 @@ class AppCase(unittest.TestCase):
             mock.patch.object(platforms, "window_rect",
                               lambda hwnd: next((r for h, r, ok in self.simulated_windows()
                                                  if h == hwnd and ok), None)),
-            mock.patch.object(parton, "CLIMB_CHANCE", 0.0),       # it climbs only when a test says so
-            mock.patch.object(parton, "SETTINGS_FILE", Path(self.tmp.name) / "settings.json"),
+            mock.patch.object(capu, "CLIMB_CHANCE", 0.0),         # it climbs only when a test says so
+            mock.patch.object(capu, "SETTINGS_FILE", Path(self.tmp.name) / "settings.json"),
             mock.patch.object(ui, "CURSOR_DIR", Path(self.tmp.name) / "cursors"),
             mock.patch.object(ui, "_cursors", None),
-            mock.patch.object(parton, "fullscreen_app_open", lambda: self.fullscreen),
+            mock.patch.object(capu, "fullscreen_app_open", lambda: self.fullscreen),
             mock.patch.object(ui, "any_mouse_button_down", lambda: self.buttons),
-            mock.patch.object(parton, "TRAIN_CHANCE", 0.0),       # it trains only when a test says so
-            mock.patch.object(parton, "COUNTER_CHANCE", 0.0),
-            mock.patch.object(parton, "EVADE_CHANCE", 0.0),
+            mock.patch.object(capu, "TRAIN_CHANCE", 0.0),         # it trains only when a test says so
+            mock.patch.object(capu, "COUNTER_CHANCE", 0.0),
+            mock.patch.object(capu, "EVADE_CHANCE", 0.0),
         ]
-        for module in (parton, dummy, ui):
+        for module in (capu, dummy, ui):
             patches.append(mock.patch.object(module, "mouse_pos", lambda: tuple(self.cursor)))
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
         random.seed(1)
-        self.app = parton.App()
+        self.app = capu.App()
         self.addCleanup(self.close_app)
         # When the program closes itself (nobody left on the screen), it must not
         # leave its timers behind for the next tests either.
@@ -127,7 +127,7 @@ class AppCase(unittest.TestCase):
             cancel_timers(self.app.root)
             real_destroy()
         self.app.root.destroy = destroy
-        self.p, self.d = self.app.parton, self.app.dummy
+        self.p, self.d = self.app.capu, self.app.dummy
         _, _, _, self.bottom = ui.work_area()
         self.pump(0.2)
 
@@ -152,8 +152,8 @@ class AppCase(unittest.TestCase):
         return False
 
     # --- Setting the scene ---------------------------------------------------------
-    def park_parton(self, x=None, facing=1, seconds=100):
-        """Parton standing still (not reacting to anything) at `x`, middle of the screen by default."""
+    def park_capu(self, x=None, facing=1, seconds=100):
+        """Capu standing still (not reacting to anything) at `x`, middle of the screen by default."""
         lo, hi = self.p.bounds()
         self.p.x = (lo + hi) / 2 if x is None else x
         self.p.y = self.p.vx = self.p.vy = 0.0
@@ -161,7 +161,7 @@ class AppCase(unittest.TestCase):
         self.p.hits = 0
         self.p.set_state("idle", idle_seconds=seconds)
 
-    def cursor_on_parton(self):
+    def cursor_on_capu(self):
         self.cursor[:] = [int(self.p.x), int(self.bottom - self.p.y - self.p.body_height / 2)]
 
     def cursor_on_dummy(self):
@@ -169,7 +169,7 @@ class AppCase(unittest.TestCase):
         self.cursor[:] = [int(self.d.center_x()), int(self.bottom - (low + high) / 2)]
 
     def throw_dummy(self, gap=None, vx=0.0, y=0.0, vy=0.0):
-        """Send the dummy flying at Parton: from `gap` px to his left, or from right above him."""
+        """Send the dummy flying at Capu: from `gap` px to his left, or from right above him."""
         d, p = self.d, self.p
         d.state, d.y, d.vx, d.vy = "rest", 0.0, 0.0, 0.0
         if gap is None:
@@ -181,7 +181,7 @@ class AppCase(unittest.TestCase):
         d.throws += 1
 
     def watch_states(self, seconds):
-        """States Parton goes through over `seconds`."""
+        """States Capu goes through over `seconds`."""
         seen = []
         end = time.perf_counter() + seconds
         while time.perf_counter() < end:

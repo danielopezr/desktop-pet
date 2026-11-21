@@ -1,4 +1,4 @@
-"""The tops of the windows, where Parton and the dummy stand: which stretches can be seen."""
+"""The tops of the windows, where Capu and the dummy stand: which stretches can be seen."""
 import unittest
 
 from tests.support import ROOT  # noqa: F401  (puts the program's folder on the path)

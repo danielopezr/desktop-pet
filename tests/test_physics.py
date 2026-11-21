@@ -1,4 +1,4 @@
-"""Throwing, falling and click-or-drag rules shared by Parton and the dummy."""
+"""Throwing, falling and click-or-drag rules shared by Capu and the dummy."""
 import unittest
 from unittest import mock
 

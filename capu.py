@@ -1,20 +1,20 @@
-"""Parton: a desktop pet for Windows ("Little Axion" character by Jesshiyoo),
-together with a training dummy (dummy.py), both in this one program.
+"""Capu: a desktop pet for Windows, together with a training dummy (dummy.py),
+both in this one program.
 
 - Lives at the bottom of the screen, standing on the taskbar.
 - Idles for a while and then runs to a random spot.
 - If it sees the cursor nearby (left or right, not too high), it runs to it
-  and swings its axe with attack 1 or attack 2, at random. If the cursor is
-  above the axe's vertical reach, it tries to jump at it.
-- If the cursor is right on top of it, it dashes back to get the axe's
+  and swings its lantern with attack 1 or attack 2, at random. If the cursor
+  is above the lantern's vertical reach, it tries to jump at it.
+- If the cursor is right on top of it, it dashes back to get the lantern's
   distance and then attacks.
-- If the cursor is within reach sideways but too high for the axe, it jumps
+- If the cursor is within reach sideways but too high for the lantern, it jumps
   to try to reach it, and swings in the air if it gets close enough.
 - Left click and hold to pick it up; release it anywhere and it falls back
   down to the taskbar. Let go while moving the cursor and it is thrown in
   that direction, as fast as the cursor was moving.
 - A quick left click hits it; on the sixth hit it dies and disappears.
-- Now and then, when the dummy is close enough, Parton goes to it and hits it
+- Now and then, when the dummy is close enough, Capu goes to it and hits it
   a few times.
 - When the dummy is thrown at it, it usually dodges: it jumps over a dummy
   coming from the side and dashes away from one falling on it.
@@ -24,15 +24,15 @@ together with a training dummy (dummy.py), both in this one program.
   near (the taskbar under it counts) wakes it up ("!"), and so does hitting
   it or picking it up. A cursor that creeps up slowly doesn't wake it until
   it touches it. In calm mode the cursor never wakes it: only a hit,
-  picking it up or "Wake Parton" in the menu do. However it wakes up, a "!"
+  picking it up or "Wake Capu" in the menu do. However it wakes up, a "!"
   pops over its head; woken by a hit, it also hops aside, startled,
   keeping its eyes on the cursor. In calm mode, a cursor that keeps rubbing
   over it for a couple of seconds wakes it up ("!"): it gets up, looks
   around, dazed, walks a little way off and goes back to sleep there.
-- Now and then, when Parton hits the dummy, it swings back and hits him,
+- Now and then, when Capu hits the dummy, it swings back and hits him,
   knocking him back a little; a puzzled "?" floats up from his head.
 - Right click on either of them: menu to revive, hide or show each one, put
-  Parton to sleep or wake him up, open
+  Capu to sleep or wake him up, open
   the settings (calm mode, do not disturb, training, dummy fights back) or
   exit. If neither is left on the screen, the program closes.
 - Calm mode: it ignores the cursor (no chasing or attacking).
@@ -47,7 +47,7 @@ together with a training dummy (dummy.py), both in this one program.
 
 Every animation in the pack is listed in ANIMATIONS; the ones not used yet
 are ready for later. The sprites are not included in the repository (see
-README.md): put the pack's PNG files in assets/parton/sprites.
+README.md): put the pack's PNG files in assets/capu/sprites.
 """
 import ctypes
 import json
@@ -82,10 +82,11 @@ TICK_MS = 16                  # update rate (~60 fps)
 VISION_RANGE = 450            # horizontal distance at which it sees the cursor
 VISION_HEIGHT = 250           # how far above the taskbar it can see the cursor
 LOSE_RANGE = 600              # beyond this distance it stops chasing
-ATTACK_REACH = 35 * SCALE     # axe reach (the slash reaches 26-43 px ahead)
+ATTACK_REACH = 35 * SCALE     # axe reach (the slash reaches 26-43 px ahead; Capu's lantern, up to 33)
 ATTACK_HEIGHT = 19 * SCALE    # top of the slash above its feet (sprite: 1-19 px)
 SLASH_CENTER = 10 * SCALE     # middle of the slash above its feet: where it aims
-SLASH_REACH = 43 * SCALE      # how far ahead of its body center the slash gets
+# How far ahead of its body center the slash gets is measured from the sprites
+# (see slash_reach): 43 px with the pack's axe, 33 with Capu's lantern.
 ATTACK_PAUSE = 0.35           # pause between swings, in seconds
 TOO_CLOSE = 20 * SCALE        # cursor on top of it: the axe would miss
 DASH_SPEED = 550              # pixels per second when dashing back
@@ -148,31 +149,31 @@ STAY_CHANCE = 0.6             # on a window, chance of wandering along it (else 
 WALK_OFF_SPEED = 120          # sideways speed it keeps as it walks off the edge of a window
 SLASH_FRAMES = {"attack1": (3,), "attack2": (3, 9)}  # frames where the slash lands
 
-# Dodging the dummy when it is thrown at Parton
+# Dodging the dummy when it is thrown at Capu
 EVADE_CHANCE = 0.75           # chance of dodging each throw of the dummy at it
 EVADE_MARGIN = 0.06           # it dodges at the last moment: when waiting this much longer would be too late
 EVADE_LOOKAHEAD = 1.2         # how far ahead it follows the dummy's flight, in seconds
 EVADE_JUMP_HEIGHT = 260       # how high it jumps over the dummy, in pixels
 EVADE_DASH_DISTANCE = 260     # how far it dashes out of the way, in pixels
-KNOCKBACK_FACTOR = 0.6        # share of the dummy's speed that pushes Parton when it hits him
+KNOCKBACK_FACTOR = 0.6        # share of the dummy's speed that pushes Capu when it hits him
 KNOCKBACK_MAX = 900           # cap on that push, in pixels per second
 KNOCKBACK_LIFT = 450          # the push also pops him up a little (upward speed)
 
 # The dummy hitting back
-COUNTER_CHANCE = 0.2          # chance that a hit from Parton makes the dummy swing back at him
+COUNTER_CHANCE = 0.2          # chance that a hit from Capu makes the dummy swing back at him
 COUNTER_DELAY_MS = 250        # the swing back comes this long after his hit
-COUNTER_REACH = 40            # it only reaches Parton if he is this close to it, in pixels
+COUNTER_REACH = 40            # it only reaches Capu if he is this close to it, in pixels
 COUNTER_PUSH = 450            # how hard it pushes him away (sideways speed)
 COUNTER_LIFT = 350            # and how much it pops him up (upward speed)
 EVADE_STATES = ("idle", "run", "train", "chase", "flee", "attack", "dodge")  # it can dodge from these
 
 # Menu settings, saved between runs
-SETTINGS_FILE = Path(os.environ.get("APPDATA", Path.home())) / "Parton" / "settings.json"
+SETTINGS_FILE = Path(os.environ.get("APPDATA", Path.home())) / "Capu" / "settings.json"
 DEFAULT_SETTINGS = {
     "calm": False,            # ignore the cursor: no chasing or attacking it
     "do_not_disturb": True,   # hide while a full-screen app is in front
     "training": True,         # go and hit the dummy now and then
-    "dummy_hits_back": True,  # the dummy sometimes hits Parton back
+    "dummy_hits_back": True,  # the dummy sometimes hits Capu back
     "windows": True,          # climb onto and walk on the open windows
 }
 SETTING_LABELS = {"calm": "Calm mode", "do_not_disturb": "Do not disturb",
@@ -180,13 +181,13 @@ SETTING_LABELS = {"calm": "Calm mode", "do_not_disturb": "Do not disturb",
                   "windows": "Walk on windows"}
 FULLSCREEN_CHECK_MS = 1000    # how often "do not disturb" looks for a full-screen app
 
-# The icon in the system tray: Parton drawn pixel for pixel, with a light
+# The icon in the system tray: Capu drawn pixel for pixel, with a light
 # outline so it shows on a dark taskbar too. At 16 px only its head fits.
 TRAY_OUTLINE = ui.TEXT_COLOR
 TRAY_HEAD = 14                # sprite pixels of its head in the smallest icon (16 with the outline)
 TRAY_SIZES = (16, 32, 48)
 
-SPRITES = Path(__file__).parent / "assets" / "parton" / "sprites"
+SPRITES = Path(__file__).parent / "assets" / "capu" / "sprites"
 
 # name: (file, milliseconds per frame, loops)
 ANIMATIONS = {
@@ -342,17 +343,58 @@ def horns(frame):
     return left, top, right
 
 
+NOSE = (0xE9, 0xA3, 0xA3)     # Capu's pink nose in its own lantern sprites (it has no horns there)
+NOSE_TO_TOP = 8               # rows from its nose up to the tips of its hood's ears
+HOOD_HALF = 6                 # its hood spans this far to each side of the nose (13 px, like the horns)
+
+
+def nose(frame):
+    """(left, top, right) of its head in `frame` found from its nose, for the
+    lantern sprites, or None if the nose doesn't show.
+
+    No other part of those sprites is that pink, and its head (hood and face)
+    never changes shape, so the nose marks the middle of its head and how far
+    up it starts. It doesn't show when everything flashes white (getting hurt)
+    or when it fades away.
+    """
+    px = frame.load()
+    for y in range(frame.height):
+        for x in range(frame.width):
+            r, g, b, a = px[x, y]
+            if a >= 128 and (r, g, b) == NOSE:
+                return x - HOOD_HALF, y - NOSE_TO_TOP, x + HOOD_HALF + 1
+    return None
+
+
+def head_mark(frame):
+    """(left, top, right) of its head in `frame`, or None if it doesn't show well:
+    from its horns in the pack's sprites, from its nose in the lantern ones."""
+    return horns(frame) or nose(frame)
+
+
 def head_offset(frame):
     """How far the middle of its head (between its horns) is from the middle of
-    `frame`, in screen pixels (facing right), or None if the horns don't show."""
-    h = horns(frame)
+    `frame`, in screen pixels (facing right), or None if its head doesn't show."""
+    h = head_mark(frame)
     return None if h is None else ((h[0] + h[2]) / 2 - frame.width / 2) * SCALE
 
 
 def head_top_row(frame):
     """The row of `frame` where its head starts (the tips of its horns), or None."""
-    h = horns(frame)
+    h = head_mark(frame)
     return None if h is None else h[1]
+
+
+def slash_reach(box):
+    """How far ahead of its body center (sprite pixels) its swing gets in the
+    frames where it lands (the shortest of them): the axe's slash in the pack's
+    sprites, the lantern in Capu's own ones. `box` is the crop from crop_box."""
+    center = (box[0] + box[2]) / 2
+    reach = []
+    for name, picks in SLASH_FRAMES.items():
+        frames = raw_frames(ANIMATIONS[name][0])
+        reach += [solid_mask(frames[i]).getbbox()[2] - 1 - center for i in picks]
+    return min(reach)
 
 
 def fill_gaps(values, fallback):
@@ -401,7 +443,7 @@ def tray_images(box):
     """Its icon for the system tray, {size: image}: its idle pose, or only its
     head (between the horns, down) where the whole of it doesn't fit."""
     frame = animation_frames("idle", box)[0]
-    left, top, right = horns(frame)
+    left, top, right = head_mark(frame)
     middle = (left + right) // 2
     half = TRAY_HEAD // 2
     head = frame.crop((middle - half, top, middle + half, top + TRAY_HEAD))
@@ -426,9 +468,9 @@ class App:
         self.away = False                         # hidden by "do not disturb"
         self.ledges = []                          # window tops to stand on: (height, left, right, window)
         self.dummy = training_dummy.TrainingDummy(self.root, self) if training_dummy.available() else None
-        self.parton = Parton(self.root, self)
+        self.capu = Capu(self.root, self)
         try:
-            self.tray = tray.TrayIcon(self.root, tray_images(self.parton.box), "Parton",
+            self.tray = tray.TrayIcon(self.root, tray_images(self.capu.box), "Capu",
                                       self.tray_clicked)
         except OSError:
             self.tray = None                      # no tray: right-clicking them still works
@@ -468,11 +510,11 @@ class App:
         self.open_menu(*mouse_pos())
 
     def characters(self):
-        return [(name, c) for name, c in (("Parton", self.parton), ("dummy", self.dummy)) if c]
+        return [(name, c) for name, c in (("Capu", self.capu), ("dummy", self.dummy)) if c]
 
     def menu_items(self):
         """(label, action) for each character: revive the dead, hide or show the
-        living, and put Parton to sleep (or wake him up)."""
+        living, and put Capu to sleep (or wake him up)."""
         items = []
         for name, c in self.characters():
             if not c.alive:
@@ -481,8 +523,8 @@ class App:
                 items.append((f"Show {name}", c.unhide))
             else:
                 items.append((f"Hide {name}", c.hide))
-                if c is self.parton:
-                    items.append(("Wake Parton", c.wake) if c.asleep() else ("Sleep Parton", c.sleep_now))
+                if c is self.capu:
+                    items.append(("Wake Capu", c.wake) if c.asleep() else ("Sleep Capu", c.sleep_now))
         return items
 
     def setting_items(self):
@@ -567,11 +609,11 @@ class App:
         self.root.mainloop()
 
 
-class Parton:
+class Capu:
     def __init__(self, master, app):
         self.app = app
         self.root = tk.Toplevel(master)
-        self.root.title("Parton")
+        self.root.title("Capu")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-transparentcolor", KEY_COLOR)
@@ -583,6 +625,7 @@ class Parton:
         self.height = (box[3] - box[1]) * SCALE
         self.ground = (ground - box[1]) * SCALE   # height of the feet inside the window
         self.body_half = body_half * SCALE
+        self.slash_reach = slash_reach(box) * SCALE   # how far ahead of its body center the slash gets
         idle_top = union_bbox(raw_frames(ANIMATIONS["idle"][0]))[1]
         self.body_height = (ground - idle_top) * SCALE   # from its feet to the top of its head
         # Where its head is in every frame, from its body center, facing right:
@@ -682,7 +725,7 @@ class Parton:
         return not self.gone and not self.hidden
 
     def respawning(self):
-        return False                              # Parton only comes back from the menu
+        return False                              # Capu only comes back from the menu
 
     def hide(self):
         self.hidden = True
@@ -780,14 +823,14 @@ class Parton:
         if self.dummy is None or not self.dummy.can_be_hit():
             return False
         d0, d1 = self.dummy.body_span()
-        a, b = sorted((self.x, self.x + self.facing * SLASH_REACH))
+        a, b = sorted((self.x, self.x + self.facing * self.slash_reach))
         if b < d0 or a > d1:                 # not in front of it, or too far
             return False
         low, high = self.dummy.body_heights()  # the dummy may be held or flying
         return self.y <= high and self.y + ATTACK_HEIGHT >= low
 
     def point_on_dummy(self, height):
-        """Screen point where Parton strikes the dummy: on the side of its body
+        """Screen point where Capu strikes the dummy: on the side of its body
         that faces him, `height` pixels above his feet."""
         _, _, _, bottom = work_area()
         return self.dummy.surface_point(bottom - self.y - height,
@@ -900,7 +943,7 @@ class Parton:
         self.set_anim("run", restart=True, frame_ms=SHUFFLE_FRAME_MS)
 
     def train_target(self):
-        """Spot at the axe's distance from the dummy, on the side Parton is on
+        """Spot at the axe's distance from the dummy, on the side Capu is on
         (or the other one if there is no room there)."""
         lo, hi = self.bounds()
         cx = self.dummy.center_x()
@@ -1188,7 +1231,7 @@ class Parton:
         when it touches its body. Put to sleep
         from the menu, the cursor must first go away before coming near wakes it.
         In calm mode the cursor never wakes it (a hit, picking it up or "Wake
-        Parton" in the menu still do), but rubbing it for a while bothers it:
+        Capu" in the menu still do), but rubbing it for a while bothers it:
         it gets up, looks around dazed, walks a little way off and naps again.
         """
         if self.app.settings["calm"]:
@@ -1591,7 +1634,7 @@ class Parton:
             d.impact_done = True
             push = self.knockback_speed(d)
             d.vx = -d.vx * IMPACT_BOUNCE
-            self.hit()                       # the dummy landed on Parton...
+            self.hit()                       # the dummy landed on Capu...
             self.knock(push, KNOCKBACK_LIFT)  # ...and pushes him away
 
     def knock(self, vx, lift):
@@ -1603,7 +1646,7 @@ class Parton:
             self.facing = -1 if vx > 0 else 1
 
     def dummy_hits_back(self):
-        """The dummy swings back after one of Parton's hits: if he is still right
+        """The dummy swings back after one of Capu's hits: if he is still right
         next to it, it hits him and knocks him away."""
         d = self.dummy
         if (d is None or not d.standing() or not self.alive or self.away
@@ -1627,7 +1670,7 @@ class Parton:
         return self.x + self.facing * offset, bottom - self.y - self.head_heights[self.anim][i]
 
     def knockback_speed(self, d):
-        """Sideways speed the dummy's hit gives Parton: in the direction the dummy
+        """Sideways speed the dummy's hit gives Capu: in the direction the dummy
         was flying, or away from it if it fell on him from above."""
         speed = min(d.speed() * KNOCKBACK_FACTOR, KNOCKBACK_MAX)
         if abs(d.vx) >= 50:
@@ -1857,8 +1900,8 @@ class Parton:
 
 
 if __name__ == "__main__":
-    # Single instance: if Parton is already running, don't open another one.
-    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Parton_SingleInstance")
+    # Single instance: if Capu is already running, don't open another one.
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Capu_SingleInstance")
     if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         raise SystemExit
     try:
@@ -1869,8 +1912,8 @@ if __name__ == "__main__":
     if missing:
         tk.Tk().withdraw()
         messagebox.showerror(
-            "Parton",
-            "Sprites not found in assets/parton/sprites:\n\n" + "\n".join(missing)
+            "Capu",
+            "Sprites not found in assets/capu/sprites:\n\n" + "\n".join(missing)
             + "\n\nDownload the free \"Little Axion\" pack by Jesshiyoo "
               "(https://jesshiyoo.itch.io/) and copy its PNG files there. See README.md.")
         raise SystemExit(1)

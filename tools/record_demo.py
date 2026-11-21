@@ -2,14 +2,14 @@
 
 Usage: python tools/record_demo.py [output.gif]
 
-It runs a scripted scene: Parton chases the cursor and swings at it on the
-ground and in the air, the cursor hits the dummy and throws it at Parton, who
-dodges it, and the dummy hits Parton back while he trains.
+It runs a scripted scene: Capu chases the cursor and swings at it on the
+ground and in the air, the cursor hits the dummy and throws it at Capu, who
+dodges it, and the dummy hits Capu back while he trains.
 
 Nothing is captured from the screen: every frame is drawn from the program's
 own images (characters, hearts, "!" and "?") on a plain backdrop, with the
 simulated cursor drawn on top. The real mouse is never moved, and the real
-settings and cursor files are left alone. Parton and the dummy show up on the
+settings and cursor files are left alone. Capu and the dummy show up on the
 screen for about 15 seconds while it records. It needs the sprites (see
 README.md).
 """
@@ -29,27 +29,27 @@ ctypes.windll.shcore.SetProcessDpiAwareness(2)
 from PIL import Image, ImageDraw, ImageTk
 
 import dummy
-import parton
+import capu
 import platforms
 import ui
 
 random.seed(7)
 cursor = [0.0, 0.0]
-for module in (parton, dummy, ui):
+for module in (capu, dummy, ui):
     module.mouse_pos = lambda: (int(cursor[0]), int(cursor[1]))
-parton.SETTINGS_FILE = TMP / "settings.json"
+capu.SETTINGS_FILE = TMP / "settings.json"
 ui.CURSOR_DIR = TMP / "cursors"
-if parton.missing_sprites() or not dummy.available():
+if capu.missing_sprites() or not dummy.available():
     sys.exit("The sprites are missing from assets/ (see README.md).")
-parton.fullscreen_app_open = lambda: False
+capu.fullscreen_app_open = lambda: False
 platforms.window_rects = lambda: []          # a plain backdrop: no windows to stand on
 platforms.window_rect = lambda hwnd: None
-parton.EVADE_CHANCE = 1.0
-parton.COUNTER_CHANCE = 0.0
-parton.TRAIN_CHANCE = 0.0          # it only trains when the script says so
+capu.EVADE_CHANCE = 1.0
+capu.COUNTER_CHANCE = 0.0
+capu.TRAIN_CHANCE = 0.0            # it only trains when the script says so
 
-app = parton.App()
-p, d = app.parton, app.dummy
+app = capu.App()
+p, d = app.capu, app.dummy
 app.settings["training"] = True
 
 # The dummy's current frame (tkinter doesn't hand it back).
@@ -70,7 +70,7 @@ def backdrop():
     w, h = SCENE[2] - SCENE[0], SCENE[3] - SCENE[1]
     img = Image.new("RGB", (w, h))
     draw = ImageDraw.Draw(img)
-    draw.rectangle((0, 0, w, h - 36), fill=(56, 66, 92))             # a plain desktop
+    draw.rectangle((0, 0, w, h - 36), fill=(124, 136, 156))          # a plain desktop, light enough for Capu's navy cloak
     draw.rectangle((0, h - 36, w, h), fill=(24, 26, 34))          # a plain taskbar
     return img
 
@@ -208,7 +208,7 @@ def click_dummy(fx, fy):
     app.root.after(70, lambda: d.release(None))
 
 
-def parton_body():
+def capu_body():
     return p.x, bottom - p.y - p.body_height / 2
 
 
@@ -227,7 +227,7 @@ def setup():
 
 at(0, setup)
 at(700, lambda: move_to(lambda: (p.x - 260, bottom - 70), 0.8))          # it sees it: chase, swing
-at(2600, lambda: move_to(lambda: (p.x - parton.ATTACK_REACH * 0.6, bottom - 175), 0.35))  # too high: jump
+at(2600, lambda: move_to(lambda: (p.x - capu.ATTACK_REACH * 0.6, bottom - 175), 0.35))    # too high: jump
 at(4300, lambda: app.settings.update(calm=True))                        # calm: the cursor goes elsewhere
 at(4300, lambda: move_to(lambda: dummy_point(0.62, 0.45), 1.0))         # over the dummy: its hearts
 at(5600, lambda: click_dummy(0.62, 0.42))
@@ -248,18 +248,18 @@ def fling():
 
 
 at(7400, grab_dummy)
-at(7800, fling)                                                        # thrown at Parton: he dodges
+at(7800, fling)                                                        # thrown at Capu: he dodges
 at(8600, lambda: move_to((left + 520, bottom - 300), 0.6))
 
 
 def train():
-    parton.COUNTER_CHANCE = 1.0
+    capu.COUNTER_CHANCE = 1.0
     p.set_state("train")
 
 
 at(9700, train)                                                        # trains; the dummy hits back: "?"
-at(12100, lambda: setattr(parton, "COUNTER_CHANCE", 0.0))
-at(12400, lambda: move_to(parton_body, 0.7))                           # over Parton: his hearts
+at(12100, lambda: setattr(capu, "COUNTER_CHANCE", 0.0))
+at(12400, lambda: move_to(capu_body, 0.7))                             # over Capu: his hearts
 END_MS = 14600
 
 

@@ -1,4 +1,4 @@
-"""Where Parton and the dummy can stand besides the taskbar: the tops of the
+"""Where Capu and the dummy can stand besides the taskbar: the tops of the
 open windows.
 
 Only the stretches of each top edge that can be seen count: where a window in

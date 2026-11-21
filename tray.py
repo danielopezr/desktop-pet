@@ -1,6 +1,6 @@
-"""Parton's icon in the system tray, next to the clock.
+"""Capu's icon in the system tray, next to the clock.
 
-Clicking it (left or right) opens the same menu as right-clicking Parton or
+Clicking it (left or right) opens the same menu as right-clicking Capu or
 the dummy, so they can be brought back, and the program closed, even when
 neither of them is on the screen. If Explorer restarts (and with it the
 taskbar), the icon is put back.
@@ -28,7 +28,7 @@ WM_RBUTTONUP = 0x0205
 NIM_ADD, NIM_DELETE = 0, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP = 0x1, 0x2, 0x4
 SM_CXSMICON = 49                  # size of a small icon (the tray's), in pixels
-CLASS_NAME = "PartonTrayWindow"
+CLASS_NAME = "CapuTrayWindow"
 POLL_MS = 50                      # how often Tk looks for a click on the icon
 
 LRESULT = wintypes.LPARAM

@@ -1,7 +1,7 @@
-"""Parton and the dummy together: behavior, menu, settings, cursors and hearts.
+"""Capu and the dummy together: behavior, menu, settings, cursors and hearts.
 
 These run the real program for a moment, with a simulated cursor (the real
-mouse is never moved), so Parton and the dummy show up on the screen while
+mouse is never moved), so Capu and the dummy show up on the screen while
 they run.
 """
 import time
@@ -11,7 +11,7 @@ from unittest import mock
 
 from tests.support import REAL_FULLSCREEN_CHECK, AppCase, Click, cursor_file, needs_sprites
 import dummy
-import parton
+import capu
 import platforms
 import tray
 import ui
@@ -41,12 +41,12 @@ class Basics(AppCase):
         self.assertEqual(self.d.y, 0)
 
     def test_health_is_even_two_hits_per_heart(self):
-        self.assertEqual(parton.HITS_TO_DIE % 2, 0)
+        self.assertEqual(capu.HITS_TO_DIE % 2, 0)
         self.assertEqual(dummy.HITS_TO_DIE % 2, 0)
 
-    def test_parton_dies_on_the_last_hit_and_revives(self):
-        self.park_parton()
-        self.p.hits = parton.HITS_TO_DIE - 1
+    def test_capu_dies_on_the_last_hit_and_revives(self):
+        self.park_capu()
+        self.p.hits = capu.HITS_TO_DIE - 1
         self.p.hit()
         self.assertFalse(self.p.alive)
         self.p.revive()
@@ -61,13 +61,13 @@ class Basics(AppCase):
 
 @needs_sprites
 class Cursor(AppCase):
-    """Parton chasing (or not) the cursor."""
+    """Capu chasing (or not) the cursor."""
 
     def cursor_near(self):
         self.cursor[:] = [int(self.p.x + 300), int(self.bottom - 60)]
 
     def test_it_chases_and_attacks_the_cursor_with_a_heads_up(self):
-        self.park_parton(seconds=0.2)
+        self.park_capu(seconds=0.2)
         shown = mock.Mock(wraps=self.p.alert.show)
         self.p.alert.show = shown
         self.cursor_near()
@@ -80,7 +80,7 @@ class Cursor(AppCase):
         # It spots the cursor while resting after a landing: the chase still starts with a "!".
         shown = mock.Mock(wraps=self.p.alert.show)
         self.p.alert.show = shown
-        self.park_parton(seconds=0.4)
+        self.park_capu(seconds=0.4)
         self.p.on_cursor = False
         self.cursor_near()
         self.watch_states(1.0)
@@ -90,7 +90,7 @@ class Cursor(AppCase):
         """In every pose, facing either way, the "!" is right over the middle of the
         head in the frame on show (measured on the image itself, axe left out)."""
         from PIL import Image, ImageTk
-        self.park_parton()
+        self.park_capu()
         for name in ("idle", "run", "dash", "jump", "fall", "attack1", "hurt"):
             for facing in (1, -1):
                 with self.subTest(animation=name, facing=facing):
@@ -101,9 +101,9 @@ class Cursor(AppCase):
                     self.p.alert.show(self.p.head_top)
                     self.pump(0.03)
                     shown = ImageTk.getimage(self.p.shown).convert("RGB")   # at screen size
-                    frame = shown.resize((shown.width // parton.SCALE, shown.height // parton.SCALE),
+                    frame = shown.resize((shown.width // capu.SCALE, shown.height // capu.SCALE),
                                          Image.NEAREST)
-                    head = parton.head_offset(_without_key(frame))
+                    head = capu.head_offset(_without_key(frame))
                     if head is None:
                         continue                 # horns hidden (a white flash): it keeps the last spot
                     window_center = self.p.root.winfo_rootx() + self.p.width / 2
@@ -113,15 +113,15 @@ class Cursor(AppCase):
 
     def test_calm_mode_ignores_it(self):
         self.app.settings["calm"] = True
-        self.park_parton(seconds=0.2)
+        self.park_capu(seconds=0.2)
         self.cursor_near()
         states = self.watch_states(1.5)
         self.assertNotIn("chase", states)
         self.assertNotIn("attack", states)
 
     def test_it_jumps_and_swings_in_the_air_without_stopping(self):
-        self.park_parton(seconds=0.2)
-        self.cursor[:] = [int(self.p.x + parton.ATTACK_REACH * 0.6), int(self.bottom - 175)]
+        self.park_capu(seconds=0.2)
+        self.cursor[:] = [int(self.p.x + capu.ATTACK_REACH * 0.6), int(self.bottom - 175)]
         samples = []                                    # the first swing in the air only
         end = time.perf_counter() + 2.0
         while time.perf_counter() < end:
@@ -132,7 +132,7 @@ class Cursor(AppCase):
                 break
             time.sleep(0.005)
         self.assertTrue(samples, "it never swung in the air")
-        self.assertGreaterEqual(samples[0][0], parton.AIR_ATTACK_FIRST_FRAME)
+        self.assertGreaterEqual(samples[0][0], capu.AIR_ATTACK_FIRST_FRAME)
         heights = [y for _, y in samples]
         self.assertLess(heights[-1], heights[0])        # it keeps moving down: no hanging still
 
@@ -141,7 +141,7 @@ class Cursor(AppCase):
 class Sleeping(AppCase):
     def setUp(self):
         super().setUp()
-        patch = mock.patch.object(parton, "SLEEP_AFTER", 0.4)
+        patch = mock.patch.object(capu, "SLEEP_AFTER", 0.4)
         patch.start()
         self.addCleanup(patch.stop)
         self.alert = mock.Mock(wraps=self.p.alert.show)
@@ -165,7 +165,7 @@ class Sleeping(AppCase):
 
     def test_it_dozes_off_when_the_mouse_is_still(self):
         self.assertTrue(self.fall_asleep())
-        self.pump(parton.Z_EVERY + 0.5)
+        self.pump(capu.Z_EVERY + 0.5)
         self.assertEqual(self.p.state, "sleep")
         self.assertGreaterEqual(self.zzz.call_count, 1)
 
@@ -199,7 +199,7 @@ class Sleeping(AppCase):
                 for dx, gap in starts:                       # from the middle of its head...
                     self.assertLessEqual(abs(dx), 2)
                     self.assertLessEqual(gap, ui.HEARTS_GAP + 2)
-                self.assertGreater(max(facing * dx for dx in ends), parton.Z_DRIFT / 2)   # ...towards where it faces
+                self.assertGreater(max(facing * dx for dx in ends), capu.Z_DRIFT / 2)     # ...towards where it faces
 
     def test_the_cursor_coming_near_wakes_it_with_a_heads_up(self):
         self.fall_asleep()
@@ -261,7 +261,7 @@ class Sleeping(AppCase):
         self.buttons = True                            # a click somewhere, without moving
         self.pump(0.05)
         self.buttons = False
-        self.pump(parton.SLEEP_AFTER * 0.8)
+        self.pump(capu.SLEEP_AFTER * 0.8)
         self.assertNotIn(self.p.state, ("doze", "sleep"))
         self.assertTrue(self.pump(2.0, until=lambda: self.p.state == "sleep"))   # later, yes
 
@@ -272,7 +272,7 @@ class Sleeping(AppCase):
         self.pump(0.1)
         self.p.last_mouse_move = time.perf_counter() - 5   # the mouse has been still a while...
         self.p.hit()                                   # ...but it was just hit
-        states = self.watch_states(parton.SLEEP_AFTER * 0.8)
+        states = self.watch_states(capu.SLEEP_AFTER * 0.8)
         self.assertNotIn("doze", states)               # it waits the full time after the hit
 
     def test_a_hit_wakes_it_with_a_startled_hop_aside(self):
@@ -297,7 +297,7 @@ class Sleeping(AppCase):
         self.assertEqual(facings, {1})                               # eyes on the cursor all along
 
     def test_a_hit_while_awake_is_no_hop(self):
-        self.park_parton()
+        self.park_capu()
         self.cursor[:] = [int(self.p.x + 40), int(self.bottom - 40)]
         self.p.hit()
         self.assertEqual(self.p.vx, 0)
@@ -305,7 +305,7 @@ class Sleeping(AppCase):
 
     def test_picking_it_up_wakes_it_with_a_heads_up(self):
         self.fall_asleep()
-        self.cursor_on_parton()
+        self.cursor_on_capu()
         self.p.grab()
         self.assertEqual(self.p.state, "held")
         self.assertEqual(self.alert.call_count, 1)
@@ -338,7 +338,7 @@ class Sleeping(AppCase):
         self.fall_asleep()
         x0 = self.p.x
         head0 = self.p.head_top()[0]                                 # where it is on the screen
-        self.rub(parton.NUDGE_SECONDS + 0.3)
+        self.rub(capu.NUDGE_SECONDS + 0.3)
         self.assertEqual(self.p.state, "groggy")                     # up, dazed...
         self.cursor[:] = [int(x0 + 10), int(self.bottom - 30)]
         facings, states, heads = set(), [], []
@@ -354,7 +354,7 @@ class Sleeping(AppCase):
         self.assertEqual(facings, {1, -1})                           # ...looking one way and the other...
         self.assertLessEqual(max(heads) - min(heads), 2)             # ...without its head jumping about
         self.assertEqual(states, ["groggy", "shuffle", "doze"])      # ...then walks off, and naps
-        self.assertGreater(abs(self.p.head_top()[0] - head0), parton.SHUFFLE_DISTANCE * 0.8)
+        self.assertGreater(abs(self.p.head_top()[0] - head0), capu.SHUFFLE_DISTANCE * 0.8)
         self.assertEqual(self.alert.call_count, 1)                   # "!" as it wakes up
         self.assertTrue(self.pump(1.5, until=lambda: self.p.state == "sleep"))
 
@@ -362,7 +362,7 @@ class Sleeping(AppCase):
         self.app.settings["calm"] = True
         self.fall_asleep()
         for _ in range(3):                                           # a few short passes
-            self.rub(parton.NUDGE_SECONDS * 0.3)
+            self.rub(capu.NUDGE_SECONDS * 0.3)
             self.cursor[:] = [int(self.p.x + 400), int(self.bottom - 300)]
             self.pump(0.6)
         self.assertTrue(self.p.asleep())
@@ -397,8 +397,8 @@ class Sleeping(AppCase):
 @needs_sprites
 class Dodging(AppCase):
     def hits_from(self, chance, **throw):
-        with mock.patch.object(parton, "EVADE_CHANCE", chance):
-            self.park_parton()
+        with mock.patch.object(capu, "EVADE_CHANCE", chance):
+            self.park_capu()
             self.throw_dummy(**throw)
             states = self.watch_states(1.6)
         return self.p.hits, "evade" in states
@@ -416,16 +416,16 @@ class Dodging(AppCase):
         self.assertEqual(self.hits_from(1.0, gap=350, vx=700.0, y=20.0, vy=450.0), (0, False))
 
     def test_it_stays_put_when_a_window_will_catch_the_dummy(self):
-        self.park_parton()
+        self.park_capu()
         top = int(self.bottom - 250)                     # a window right above him
         self.windows.append((1, (int(self.p.x - 300), top, int(self.p.x + 300), top + 200)))
-        self.pump(parton.PLATFORM_SCAN_MS / 1000 + 0.1)
+        self.pump(capu.PLATFORM_SCAN_MS / 1000 + 0.1)
         self.assertEqual(self.hits_from(1.0, y=450.0, vy=-600.0), (0, False))
         self.assertEqual(self.d.platform, 1)             # it stayed up there
 
     def test_it_waits_until_the_last_moment(self):
-        with mock.patch.object(parton, "EVADE_CHANCE", 1.0):
-            self.park_parton()
+        with mock.patch.object(capu, "EVADE_CHANCE", 1.0):
+            self.park_capu()
             self.throw_dummy(gap=600, vx=2400.0, y=20.0, vy=450.0)
             lead = None
             end = time.perf_counter() + 1.5
@@ -439,7 +439,7 @@ class Dodging(AppCase):
         self.assertLess(lead, 0.4)                       # not long before the hit
 
     def test_a_hit_knocks_it_the_way_the_dummy_flew(self):
-        self.park_parton()
+        self.park_capu()
         x0 = self.p.x
         self.throw_dummy(gap=600, vx=2400.0, y=20.0, vy=450.0)
         self.pump(1.6)
@@ -450,7 +450,7 @@ class Dodging(AppCase):
 @needs_sprites
 class HittingBack(AppCase):
     def swing_at_dummy(self):
-        self.park_parton(x=self.d.center_x() + parton.TRAIN_GAP, facing=-1)
+        self.park_capu(x=self.d.center_x() + capu.TRAIN_GAP, facing=-1)
         self.p.swings_left = 1
         self.p.set_state("attack", target="dummy")
         self.x0 = self.p.x
@@ -458,7 +458,7 @@ class HittingBack(AppCase):
     def test_the_dummy_hits_back(self):
         shown = mock.Mock(wraps=self.p.question.show)
         self.p.question.show = shown
-        with mock.patch.object(parton, "COUNTER_CHANCE", 1.0):
+        with mock.patch.object(capu, "COUNTER_CHANCE", 1.0):
             self.swing_at_dummy()
             self.pump(1.5)
         self.assertGreaterEqual(self.d.hits, 1)
@@ -468,14 +468,14 @@ class HittingBack(AppCase):
 
     def test_not_when_the_setting_is_off(self):
         self.app.settings["dummy_hits_back"] = False
-        with mock.patch.object(parton, "COUNTER_CHANCE", 1.0):
+        with mock.patch.object(capu, "COUNTER_CHANCE", 1.0):
             self.swing_at_dummy()
             self.pump(1.5)
         self.assertGreaterEqual(self.d.hits, 1)      # one of its swings lands twice
         self.assertEqual(self.p.hits, 0)
 
     def test_no_training_when_the_setting_is_off(self):
-        self.park_parton(x=self.d.center_x() + 300)
+        self.park_capu(x=self.d.center_x() + 300)
         self.assertTrue(self.p.dummy_in_range())
         self.app.settings["training"] = False
         self.assertFalse(self.p.dummy_in_range())
@@ -513,21 +513,21 @@ class Impacts(AppCase):
         self.assertIn(first, self.d.hit_cache)
 
     def test_a_slash_still_lands_when_a_late_update_skips_its_frame(self):
-        self.park_parton()
+        self.park_capu()
         self.p.x = self.p.train_target()
         self.p.face_dummy()
         self.p.set_state("attack", target="dummy")
         self.p.swings_left = 1
         self.p.set_anim("attack1", restart=True)
-        slash = parton.SLASH_FRAMES["attack1"][0]
+        slash = capu.SLASH_FRAMES["attack1"][0]
         self.p.frame_index = slash + 1                   # it went from before the slash to after it
         self.p.check_slash("attack1", slash - 1)
         self.assertEqual(self.d.hits, 1)
         self.p.check_slash("attack1", slash + 1)         # the same frame again: no second hit
         self.assertEqual(self.d.hits, 1)
 
-    def test_nothing_is_left_floating_when_parton_is_hidden(self):
-        self.park_parton()
+    def test_nothing_is_left_floating_when_capu_is_hidden(self):
+        self.park_capu()
         self.p.alert.show(self.p.head_top)
         self.pump(0.1)
         self.assertEqual(self.p.alert.window.state(), "normal")
@@ -535,7 +535,7 @@ class Impacts(AppCase):
         self.pump(0.1)
         self.assertEqual(self.p.alert.window.state(), "withdrawn")
 
-    def test_parton_strikes_the_side_facing_him(self):
+    def test_capu_strikes_the_side_facing_him(self):
         from_left = self.d.surface_point(self.bottom - 40, from_left=True)
         from_right = self.d.surface_point(self.bottom - 40, from_left=False)
         self.assertLess(from_left[0], from_right[0])
@@ -543,9 +543,9 @@ class Impacts(AppCase):
 
 @needs_sprites
 class Hearts(AppCase):
-    def test_parton_shows_three_hearts_when_hovered(self):
-        self.park_parton()
-        self.cursor_on_parton()
+    def test_capu_shows_three_hearts_when_hovered(self):
+        self.park_capu()
+        self.cursor_on_capu()
         self.assertTrue(self.pump(0.5, until=lambda: self.p.hearts.visible))
         heart_w = len(ui.HEART[0]) + ui.HEART_GAP
         self.assertEqual(self.p.hearts.current.width(),
@@ -559,8 +559,8 @@ class Hearts(AppCase):
                          (7 * heart_w - ui.HEART_GAP) * ui.UI_SCALE)
 
     def test_not_while_held(self):
-        self.park_parton()
-        self.cursor_on_parton()
+        self.park_capu()
+        self.cursor_on_capu()
         self.pump(0.3)
         self.p.grab()
         self.pump(0.3)
@@ -575,11 +575,11 @@ class Hearts(AppCase):
 @needs_sprites
 class Cursors(AppCase):
     def test_sword_over_both_fist_while_holding(self):
-        self.park_parton()
+        self.park_capu()
         for c in (self.p, self.d):
             self.assertEqual(cursor_file(c.label), "sword")
             self.assertEqual(cursor_file(c.hitbox), "sword")
-        self.cursor_on_parton()
+        self.cursor_on_capu()
         self.p.grab()
         self.assertEqual(cursor_file(self.p.label), "fist")
         self.p.cursor_trail.add(*self.cursor)
@@ -591,8 +591,8 @@ class Cursors(AppCase):
         self.assertEqual(cursor_file(self.d.hitbox), "sword")
 
     def test_the_arrow_when_there_is_nothing_to_hit(self):
-        self.park_parton()
-        self.p.hits = parton.HITS_TO_DIE - 1
+        self.park_capu()
+        self.p.hits = capu.HITS_TO_DIE - 1
         self.p.hit()
         self.d.hits = dummy.HITS_TO_DIE - 1
         self.d.take_hit()
@@ -606,8 +606,8 @@ class Cursors(AppCase):
         self.assertEqual(cursor_file(self.p.label), "sword")
         self.assertTrue(self.p.hitbox_shown)
 
-    def test_partons_hit_zone_turns_with_him(self):
-        self.park_parton(facing=1)
+    def test_capus_hit_zone_turns_with_him(self):
+        self.park_capu(facing=1)
         self.pump(0.1)
         self.assertEqual(self.p.hitbox_facing, 1)
         self.p.facing = -1
@@ -663,7 +663,7 @@ class MenuAndSettings(AppCase):
     def test_main_menu(self):
         menu = self.open_menu()
         labels = [label for label, _ in self.labels(menu)]
-        self.assertEqual(labels, ["Hide Parton", "Sleep Parton", "Hide dummy", "Settings", "Exit"])
+        self.assertEqual(labels, ["Hide Capu", "Sleep Capu", "Hide dummy", "Settings", "Exit"])
 
     def test_settings_open_in_place_and_stay_open_after_a_switch(self):
         menu = self.open_menu()
@@ -674,7 +674,7 @@ class MenuAndSettings(AppCase):
         self.assertEqual([label for label, _ in self.labels(settings)][:1], ["Calm mode: off"])
         self.pick("Calm mode")
         self.assertTrue(self.app.settings["calm"])
-        self.assertTrue(parton.load_settings()["calm"])            # saved
+        self.assertTrue(capu.load_settings()["calm"])              # saved
         self.assertFalse(self.app.menu.closed)                      # still open...
         self.assertEqual(self.labels(self.app.menu)[0][0], "Calm mode: on")   # ...showing the change
         self.pick("Back")
@@ -682,19 +682,19 @@ class MenuAndSettings(AppCase):
 
     def test_hide_and_show(self):
         self.open_menu()
-        self.pick("Hide Parton")
+        self.pick("Hide Capu")
         self.assertTrue(self.p.hidden)
         self.assertFalse(self.p.root.winfo_viewable())
         self.open_menu()
-        self.pick("Show Parton")
+        self.pick("Show Capu")
         self.assertFalse(self.p.hidden)
 
     def test_sleep_and_wake_from_the_menu(self):
-        self.park_parton(seconds=0.2)
+        self.park_capu(seconds=0.2)
         self.app.settings["calm"] = True
-        self.cursor_on_parton()                        # the menu is opened on him
+        self.cursor_on_capu()                          # the menu is opened on him
         self.open_menu()
-        self.pick("Sleep Parton")
+        self.pick("Sleep Capu")
         self.assertTrue(self.p.asleep())
         # Moving the cursor away doesn't wake him...
         for step in range(20):
@@ -702,13 +702,13 @@ class MenuAndSettings(AppCase):
             self.pump(0.02)
         self.assertTrue(self.p.asleep())
         self.open_menu()
-        self.assertIn("Wake Parton", [label for label, _ in self.labels(self.app.menu)])
-        self.pick("Wake Parton")
+        self.assertIn("Wake Capu", [label for label, _ in self.labels(self.app.menu)])
+        self.pick("Wake Capu")
         self.assertFalse(self.p.asleep())
 
     def test_put_to_sleep_the_cursor_must_leave_before_it_can_wake_him(self):
-        self.park_parton(seconds=0.2)
-        self.cursor_on_parton()
+        self.park_capu(seconds=0.2)
+        self.cursor_on_capu()
         self.p.sleep_now()
         self.cursor[0] += 30                           # still near: he sleeps on
         self.pump(0.3)
@@ -729,25 +729,25 @@ class MenuAndSettings(AppCase):
             self.assertTrue(self.click_tray_icon(button))
             menu = self.app.menu
             self.assertEqual([label for label, _ in self.labels(menu)],
-                             ["Hide Parton", "Sleep Parton", "Hide dummy", "Settings", "Exit"])
+                             ["Hide Capu", "Sleep Capu", "Hide dummy", "Settings", "Exit"])
             self.assertLessEqual(menu.y + menu.height, self.bottom)
             menu.close()
 
     def test_with_the_tray_icon_it_stays_when_nobody_is_left(self):
         self.open_menu()
-        self.pick("Hide Parton")
+        self.pick("Hide Capu")
         self.open_menu()
         self.pick("Hide dummy")
         self.assertTrue(self.app.root.winfo_exists())
         self.assertTrue(self.click_tray_icon())              # ...and they can be brought back
-        self.pick("Show Parton")
+        self.pick("Show Capu")
         self.assertTrue(self.p.on_screen())
 
     def test_without_it_it_closes_when_nobody_is_left(self):
         self.app.tray.remove()
         self.app.tray = None
         self.open_menu()
-        self.pick("Hide Parton")
+        self.pick("Hide Capu")
         self.open_menu()
         self.pick("Hide dummy")
         with self.assertRaises(Exception):
@@ -761,8 +761,8 @@ class MenuAndSettings(AppCase):
         self.assertFalse(tray.user32.IsWindow(hwnd))
 
     def test_the_tray_icon_is_drawn_pixel_for_pixel(self):
-        images = parton.tray_images(self.p.box)
-        self.assertEqual(sorted(images), list(parton.TRAY_SIZES))
+        images = capu.tray_images(self.p.box)
+        self.assertEqual(sorted(images), list(capu.TRAY_SIZES))
         for size, image in images.items():
             self.assertEqual(image.size, (size, size))
             self.assertIsNotNone(image.getbbox())
@@ -786,7 +786,7 @@ class Windows(AppCase):
         top = int(self.bottom - height)
         entry = (hwnd, (int(left), top, int(right), top + depth), standable)
         self.windows.insert(0, entry) if front else self.windows.append(entry)
-        self.pump(parton.PLATFORM_SCAN_MS / 1000 + 0.1)
+        self.pump(capu.PLATFORM_SCAN_MS / 1000 + 0.1)
 
     def move_window(self, hwnd, dx, dy):
         i = next(i for i, w in enumerate(self.windows) if w[0] == hwnd)
@@ -794,7 +794,7 @@ class Windows(AppCase):
         self.windows[i] = (hwnd, (left + dx, top + dy, right + dx, bottom + dy), self.windows[i][2])
 
     def drop_onto(self, hwnd):
-        """Let Parton go above the middle of the window, and wait until he stands on it."""
+        """Let Capu go above the middle of the window, and wait until he stands on it."""
         left, top, right, _ = next(w[1] for w in self.windows if w[0] == hwnd)
         self.p.x = (left + right) / 2
         self.p.y, self.p.vx, self.p.vy = self.bottom - top + 60, 0.0, 0.0
@@ -857,7 +857,7 @@ class Windows(AppCase):
         d.y, d.vx, d.vy, d.state, d.impact_done = 360.0, 0.0, 0.0, "flying", True
         self.assertTrue(self.pump(2.0, until=lambda: d.state == "rest"))
         self.assertEqual((d.platform, d.feet()), (1, 300 - STAND))
-        self.assertFalse(d.standing())                 # not down where Parton trains on it
+        self.assertFalse(d.standing())                 # not down where Capu trains on it
         x = d.x
         self.move_window(1, 60, -30)
         self.pump(0.1)
@@ -870,7 +870,7 @@ class Windows(AppCase):
 
     def test_it_jumps_up_onto_a_window_nearby(self):
         self.add_window(1, self.middle + 100, 250, self.middle + 500)
-        with mock.patch.object(parton, "CLIMB_CHANCE", 1.0):
+        with mock.patch.object(capu, "CLIMB_CHANCE", 1.0):
             self.p.x = self.middle
             self.p.set_state("idle")
             self.p.idle_left = 0.05
@@ -878,7 +878,7 @@ class Windows(AppCase):
         self.assertEqual(self.p.y, 250 - STAND)
 
     def test_a_window_out_of_reach_is_not_climbed(self):
-        self.add_window(1, self.middle - 200, parton.CLIMB_HEIGHT + 100, self.middle + 200)
+        self.add_window(1, self.middle - 200, capu.CLIMB_HEIGHT + 100, self.middle + 200)
         self.assertEqual(len(self.p.ledges), 1)
         self.assertIsNone(self.p.ledge_to_climb())
 
@@ -886,7 +886,7 @@ class Windows(AppCase):
         self.add_window(1, self.middle - 300, 300, self.middle + 300)
         self.drop_onto(1)
         self.cursor[:] = [int(self.p.x + 200), int(self.bottom - 300 - 40)]   # just above the window
-        self.assertEqual(self.p.sees_mouse(parton.VISION_RANGE), (200, 40 + STAND))
+        self.assertEqual(self.p.sees_mouse(capu.VISION_RANGE), (200, 40 + STAND))
 
     def test_not_when_the_setting_is_off(self):
         self.app.settings["windows"] = False
@@ -901,13 +901,13 @@ class Windows(AppCase):
 class DoNotDisturb(AppCase):
     def test_both_hide_while_a_full_screen_app_is_open(self):
         self.fullscreen = True
-        self.pump(parton.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: self.app.away)
+        self.pump(capu.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: self.app.away)
         self.pump(0.1)
         self.assertFalse(self.p.root.winfo_viewable())
         self.assertFalse(self.d.window.winfo_viewable())
         self.assertFalse(self.p.hitbox_shown)
         self.fullscreen = False
-        self.pump(parton.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: not self.app.away)
+        self.pump(capu.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: not self.app.away)
         self.pump(0.1)
         self.assertTrue(self.p.root.winfo_viewable())
         self.assertTrue(self.d.window.winfo_viewable())
@@ -915,13 +915,13 @@ class DoNotDisturb(AppCase):
     def test_not_when_the_setting_is_off(self):
         self.app.settings["do_not_disturb"] = False
         self.fullscreen = True
-        self.pump(parton.FULLSCREEN_CHECK_MS / 1000 + 0.5)
+        self.pump(capu.FULLSCREEN_CHECK_MS / 1000 + 0.5)
         self.assertFalse(self.app.away)
         self.assertTrue(self.p.root.winfo_viewable())
 
     def test_switching_it_off_brings_them_back_at_once(self):
         self.fullscreen = True
-        self.pump(parton.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: self.app.away)
+        self.pump(capu.FULLSCREEN_CHECK_MS / 1000 + 0.5, until=lambda: self.app.away)
         self.app.toggle("do_not_disturb")                    # e.g. from the tray icon's menu
         self.assertFalse(self.app.away)
         self.assertFalse(self.p.away)

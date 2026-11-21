@@ -1,4 +1,4 @@
-"""What Parton, the dummy and the interface share to draw on the screen: where
+"""What Capu, the dummy and the interface share to draw on the screen: where
 the cursor and the taskbar are, and turning pixel art into Tk images."""
 import ctypes
 from ctypes import wintypes
